@@ -67,3 +67,31 @@ def test_write_and_read_roundtrip(tmp_path):
     write_cache(df, p)
     result = read_cache(p)
     pd.testing.assert_frame_equal(result, df)
+
+from unittest.mock import patch, MagicMock
+from data.fetcher import parse_iima_csv
+
+SAMPLE_IIMA_CSV = """year,month,Mkt-RF,SMB,HML,WML,RF
+2023,1,2.5,-0.3,1.1,0.8,0.5
+2023,2,-1.2,0.4,-0.6,1.2,0.5
+2023,3,3.1,0.1,0.9,-0.5,0.5
+"""
+
+def test_parse_iima_csv_returns_dataframe():
+    df = parse_iima_csv(SAMPLE_IIMA_CSV)
+    assert isinstance(df, pd.DataFrame)
+
+def test_parse_iima_csv_has_date_index():
+    df = parse_iima_csv(SAMPLE_IIMA_CSV)
+    assert "date" in df.columns
+    assert df["date"].dtype == "datetime64[ns]"
+
+def test_parse_iima_csv_has_factor_columns():
+    df = parse_iima_csv(SAMPLE_IIMA_CSV)
+    for col in ["mkt_rf", "smb", "hml", "wml", "rf"]:
+        assert col in df.columns, f"Missing column: {col}"
+
+def test_parse_iima_csv_converts_percent_to_decimal():
+    df = parse_iima_csv(SAMPLE_IIMA_CSV)
+    # Values in CSV are percentages (e.g. 2.5 means 2.5%), stored as decimals (0.025)
+    assert abs(df.iloc[0]["mkt_rf"] - 0.025) < 1e-6
