@@ -76,3 +76,46 @@ def compute_portfolio_scores(
     aligned_weights = weights.reindex(scores_indexed.index).fillna(0)
     aligned_weights = aligned_weights / aligned_weights.sum()  # renormalise
     return scores_indexed.multiply(aligned_weights, axis=0).sum()
+
+
+def compute_nifty500_percentile_scores(
+    port_scores: pd.Series,
+    nifty500_snapshot_path: str,
+) -> pd.Series:
+    """Rank portfolio style scores vs Nifty 500 universe distribution.
+
+    Loads the Nifty 500 snapshot, computes style z-scores for that universe,
+    then finds where each portfolio dimension score falls in the resulting
+    cross-sectional distribution (0 = bottom, 100 = top).
+
+    Args:
+        port_scores: Series of weighted portfolio z-scores (from compute_portfolio_scores),
+                     indexed by dimension name.
+        nifty500_snapshot_path: Path to CSV with Nifty 500 fundamentals.
+    Returns:
+        Series indexed by dimension with percentile ranks 0–100.
+    """
+    dims = ["value", "quality", "momentum", "size", "growth", "profitability"]
+    try:
+        nifty_df = pd.read_csv(nifty500_snapshot_path)
+    except Exception:
+        return pd.Series(50.0, index=dims)
+
+    for col in ["momentum_12m_1m", "net_margin", "revenue_cagr_3y"]:
+        if col not in nifty_df.columns:
+            nifty_df[col] = 0.0
+
+    nifty_scores = compute_style_scores(nifty_df)
+    nifty_indexed = nifty_scores.set_index("ticker")[dims]
+
+    percentiles = {}
+    for dim in dims:
+        universe = nifty_indexed[dim].dropna().values
+        if len(universe) == 0:
+            percentiles[dim] = 50.0
+            continue
+        score = port_scores.get(dim, 0.0)
+        pct = float(np.mean(universe < score) * 100)
+        percentiles[dim] = round(pct, 1)
+
+    return pd.Series(percentiles)
