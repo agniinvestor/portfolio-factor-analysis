@@ -10,8 +10,8 @@ from pathlib import Path
 from data.portfolio import load_portfolio
 from data.fetcher import fetch_iima_factors, fetch_all_fundamentals, fetch_tickertape_prices, fetch_all_prices, compute_monthly_returns
 from data.cache_manager import is_stale, CACHE_DIR
-from factors.scorer import compute_style_scores, compute_portfolio_scores
-from factors.regression import build_portfolio_returns, run_carhart_regression
+from factors.scorer import compute_style_scores, compute_portfolio_scores, compute_nifty500_percentile_scores
+from factors.regression import build_portfolio_returns, run_carhart_regression, rolling_carhart_betas, factor_return_attribution
 
 PORTFOLIO_PATH = Path(__file__).parent.parent / "portfolio.xlsx"
 
@@ -55,11 +55,12 @@ iima_factors = get_iima(force_refresh)
 fundamentals = get_fundamentals(tuple(portfolio["ticker"].tolist()), force_refresh)
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "Portfolio Overview",
     "Factor Regression",
     "Style Scorecard",
     "Stock Deep-Dive",
+    "Portfolio Profile",
 ])
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -323,3 +324,102 @@ with tab4:
         f"```\nAnalyse {selected_ticker} NSE\n```\n\n"
         f"The skill is installed globally at `~/.claude/skills/india-equity-report/`."
     )
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB 5 — Portfolio Profile
+# ═══════════════════════════════════════════════════════════════════════════════
+with tab5:
+    st.subheader("Portfolio Profile")
+
+    # Guard: needs regression result from Tab 2
+    if "reg_result" not in dir() or "port_scores" not in dir():
+        st.warning("Run the Factor Regression tab first — Tab 5 depends on those results.")
+        st.stop()
+
+    # ── Section A: Summary Cards ───────────────────────────────────────────────
+    st.markdown("### Executive Summary")
+
+    factors_display_p5 = ["mkt_rf", "smb", "hml", "wml"]
+    factor_labels_p5 = {
+        "mkt_rf": "Market (Rm-Rf)", "smb": "Size (SMB)",
+        "hml": "Value (HML)", "wml": "Momentum (WML)"
+    }
+
+    # Dominant factor: highest |beta| among significant factors (p < 0.05)
+    sig_factors = {f: reg_result["betas"][f] for f in factors_display_p5
+                   if reg_result["p_values"][f] < 0.05}
+    if sig_factors:
+        dominant_f = max(sig_factors, key=lambda f: abs(sig_factors[f]))
+        dominant_label = f"{factor_labels_p5[dominant_f]} (β={sig_factors[dominant_f]:.2f})"
+    else:
+        dominant_label = "None (p>0.05)"
+
+    # HHI and Effective N
+    hhi = (portfolio["weight"] ** 2).sum()
+    effective_n = 1 / hhi if hhi > 0 else len(portfolio)
+
+    # Top style tilt
+    dims_6 = ["value", "quality", "momentum", "size", "growth", "profitability"]
+    top_dim = port_scores[dims_6].abs().idxmax()
+    top_score = port_scores[top_dim]
+
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1.metric("Dominant Factor", dominant_label)
+    c2.metric("Alpha (monthly)", f"{reg_result['alpha']*100:.3f}%",
+              f"t = {reg_result['alpha_t']:.2f}")
+    c3.metric("R²", f"{reg_result['r_squared']:.3f}")
+    c4.metric("Top Style Tilt", f"{top_dim.capitalize()} ({top_score:+.2f})")
+    c5.metric("Portfolio HHI", f"{hhi:.4f}")
+    c6.metric("Effective N", f"{effective_n:.1f}")
+
+    # ── Auto-narrative ────────────────────────────────────────────────────────
+    mkt_b = reg_result["betas"]["mkt_rf"]
+    if mkt_b > 1.1:
+        mkt_desc = f"**aggressive market exposure** (β={mkt_b:.2f}), amplifying index moves"
+    elif mkt_b < 0.9:
+        mkt_desc = f"**defensive market exposure** (β={mkt_b:.2f}), dampening index moves"
+    else:
+        mkt_desc = f"**neutral market exposure** (β={mkt_b:.2f}), tracking the index closely"
+
+    sig_tilts = []
+    for f in ["smb", "hml", "wml"]:
+        if reg_result["p_values"][f] < 0.05:
+            b = reg_result["betas"][f]
+            direction = "positive" if b > 0 else "negative"
+            sig_tilts.append(f"{direction} {factor_labels_p5[f]} tilt (β={b:.2f})")
+
+    style_sorted = port_scores[dims_6].abs().sort_values(ascending=False)
+    top2_dims = style_sorted.index[:2].tolist()
+    style_desc_parts = []
+    for d in top2_dims:
+        z = port_scores[d]
+        if z > 0.5:
+            strength = "strong positive"
+        elif z > 0.2:
+            strength = "mild positive"
+        elif z < -0.5:
+            strength = "strong negative"
+        elif z < -0.2:
+            strength = "mild negative"
+        else:
+            strength = "neutral"
+        style_desc_parts.append(f"{strength} {d} tilt (z={z:+.2f})")
+
+    size_b = reg_result["betas"]["smb"]
+    if size_b < -0.2 and reg_result["p_values"]["smb"] < 0.05:
+        size_note = "The negative SMB beta confirms a **large-cap bias** in the portfolio."
+    elif size_b > 0.2 and reg_result["p_values"]["smb"] < 0.05:
+        size_note = "The positive SMB beta confirms a **small/mid-cap tilt** in the portfolio."
+    else:
+        size_note = "Size exposure is not statistically significant."
+
+    narrative = f"This portfolio carries {mkt_desc}. "
+    if sig_tilts:
+        narrative += "Statistically significant factor tilts include: " + "; ".join(sig_tilts) + ". "
+    else:
+        narrative += "No other factor tilts are statistically significant at the 5% level. "
+    if style_desc_parts:
+        narrative += "Style analysis shows a " + " and ".join(style_desc_parts) + ". "
+    narrative += size_note
+
+    st.info(f"*{narrative}*")
