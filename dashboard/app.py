@@ -585,3 +585,136 @@ with tab5:
                 st.plotly_chart(fig_pie, use_container_width=True)
         except Exception as e:
             st.caption(f"R² breakdown unavailable: {e}")
+
+    # ── Section C: Quantitative Detail ────────────────────────────────────────
+    st.markdown("### Quantitative Detail")
+
+    # Chart 1: Rolling Factor Betas
+    st.markdown("#### Rolling Factor Betas")
+    window_sel = st.radio(
+        "Rolling window", ["12M", "24M", "36M"], index=1, horizontal=True, key="tab5_window"
+    )
+    window_months = int(window_sel.replace("M", ""))
+
+    try:
+        rolling_betas = rolling_carhart_betas(port_returns, iima_factors, window_months=window_months)
+        valid_rolling = rolling_betas.dropna()
+        if not valid_rolling.empty:
+            roll_colors = {
+                "mkt_rf": "#3498db", "smb": "#2ecc71",
+                "hml": "#e67e22", "wml": "#9b59b6"
+            }
+            fig_roll = go.Figure()
+            for f in ["mkt_rf", "smb", "hml", "wml"]:
+                fig_roll.add_trace(go.Scatter(
+                    x=valid_rolling.index,
+                    y=valid_rolling[f],
+                    name=factor_labels_p5[f],
+                    line=dict(color=roll_colors[f]),
+                ))
+            fig_roll.add_hline(y=0, line_width=1, line_color="gray", line_dash="dash")
+            fig_roll.update_layout(
+                title=f"Rolling {window_sel} Factor Betas",
+                yaxis_title="Beta",
+                xaxis_title="Date",
+                height=400,
+                hovermode="x unified",
+            )
+            st.plotly_chart(fig_roll, use_container_width=True)
+        else:
+            st.caption("Insufficient data for rolling betas with selected window.")
+    except Exception as e:
+        st.caption(f"Rolling betas unavailable: {e}")
+
+    # Chart 2: Factor Return Attribution
+    st.markdown("#### Factor Return Attribution")
+    try:
+        attribution = factor_return_attribution(port_returns, iima_factors, reg_result)
+        attr_colors = {
+            "alpha": "#f39c12", "mkt_rf": "#3498db", "smb": "#2ecc71",
+            "hml": "#e67e22", "wml": "#9b59b6", "residual": "#95a5a6",
+        }
+        attr_labels = {
+            "alpha": "Alpha", "mkt_rf": "Market", "smb": "SMB",
+            "hml": "HML", "wml": "WML", "residual": "Residual",
+        }
+        fig_attr = go.Figure()
+        for col in ["alpha", "mkt_rf", "smb", "hml", "wml", "residual"]:
+            fig_attr.add_trace(go.Bar(
+                x=attribution.index,
+                y=attribution[col] * 100,
+                name=attr_labels[col],
+                marker_color=attr_colors[col],
+            ))
+        fig_attr.update_layout(
+            barmode="relative",
+            title="Monthly Factor Return Attribution (%)",
+            yaxis_title="Contribution (%)",
+            xaxis_title="Date",
+            height=400,
+            hovermode="x unified",
+        )
+        st.plotly_chart(fig_attr, use_container_width=True)
+    except Exception as e:
+        st.caption(f"Attribution chart unavailable: {e}")
+
+    # Chart 3: Style Score vs Nifty 500 Percentile
+    st.markdown("#### Style Score vs Nifty 500 Percentile")
+    try:
+        pct_values = [nifty_pct.get(d, 50.0) for d in dims_6]
+        fig_pct = go.Figure(go.Bar(
+            x=pct_values,
+            y=[d.capitalize() for d in dims_6],
+            orientation="h",
+            marker_color=["#3498db" if v > 50 else "#e74c3c" for v in pct_values],
+        ))
+        fig_pct.add_vline(x=50, line_width=2, line_dash="dash", line_color="gray",
+                          annotation_text="50th pct (index neutral)")
+        fig_pct.update_layout(
+            title="Portfolio Style Percentile vs Nifty 500",
+            xaxis_title="Percentile Rank (0–100)",
+            xaxis=dict(range=[0, 100]),
+            height=350,
+        )
+        st.plotly_chart(fig_pct, use_container_width=True)
+    except Exception as e:
+        st.caption(f"Percentile chart unavailable: {e}")
+
+    # Chart 4: Weight Distribution
+    st.markdown("#### Portfolio Weight Distribution")
+    port_sorted = portfolio.sort_values("weight", ascending=False).reset_index(drop=True)
+    port_sorted["weight_pct"] = port_sorted["weight"] * 100
+    port_sorted["cumulative_pct"] = port_sorted["weight_pct"].cumsum()
+
+    fig_weights = go.Figure()
+    fig_weights.add_trace(go.Bar(
+        x=port_sorted["name"],
+        y=port_sorted["weight_pct"],
+        name="Weight (%)",
+        marker_color="#3498db",
+        yaxis="y",
+    ))
+    fig_weights.add_trace(go.Scatter(
+        x=port_sorted["name"],
+        y=port_sorted["cumulative_pct"],
+        name="Cumulative Weight (%)",
+        line=dict(color="#e74c3c", width=2),
+        yaxis="y2",
+    ))
+    fig_weights.add_hline(y=50, line_width=1, line_dash="dot",
+                          line_color="orange", yref="y2",
+                          annotation_text="50%", annotation_position="right")
+    fig_weights.add_hline(y=80, line_width=1, line_dash="dot",
+                          line_color="red", yref="y2",
+                          annotation_text="80%", annotation_position="right")
+    fig_weights.update_layout(
+        title="Holdings by Weight (Descending)",
+        xaxis_title="Stock",
+        yaxis=dict(title="Weight (%)"),
+        yaxis2=dict(title="Cumulative Weight (%)", overlaying="y", side="right", range=[0, 100]),
+        height=350,
+        hovermode="x unified",
+        legend=dict(x=0.01, y=0.99),
+        xaxis=dict(tickangle=-45),
+    )
+    st.plotly_chart(fig_weights, use_container_width=True)
