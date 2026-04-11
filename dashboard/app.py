@@ -178,10 +178,81 @@ with tab2:
             st.info("No statistically significant factor tilts detected at 5% level.")
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# TAB 3 — placeholder (will be filled in Task 13)
+# TAB 3 — Style Scorecard
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab3:
-    st.info("Style Scorecard tab — coming soon.")
+    st.subheader("Per-Stock Style Scorecard (z-scores vs universe)")
+    st.caption("Green = strong positive tilt, Red = negative tilt. Scores are z-scored relative to peer universe.")
+
+    # Merge momentum into fundamentals
+    if "stock_returns_df" in dir() and not stock_returns_df.empty:
+        mom = {}
+        for ticker in portfolio["ticker"]:
+            if ticker in stock_returns_df.columns:
+                r = stock_returns_df[ticker].dropna()
+                if len(r) >= 13:
+                    mom[ticker] = (1 + r.iloc[-12:-1]).prod() - 1  # 12M-1M
+                elif len(r) > 1:
+                    mom[ticker] = (1 + r).prod() - 1
+        fundamentals["momentum_12m_1m"] = fundamentals["ticker"].map(mom).fillna(0)
+    else:
+        fundamentals["momentum_12m_1m"] = 0.0
+
+    if "revenue_cagr_3y" not in fundamentals.columns:
+        fundamentals["revenue_cagr_3y"] = 0.0
+    if "net_margin" not in fundamentals.columns:
+        fundamentals["net_margin"] = 0.0
+
+    style_scores = compute_style_scores(fundamentals)
+    weights_series = portfolio.set_index("ticker")["weight"]
+    port_scores = compute_portfolio_scores(style_scores, weights_series)
+
+    # Heatmap
+    dims = ["value", "quality", "momentum", "size", "growth", "profitability"]
+    heatmap_df = style_scores.set_index("ticker")[dims]
+    heatmap_df.index = [
+        portfolio.loc[portfolio["ticker"] == t, "name"].values[0]
+        if t in portfolio["ticker"].values else t
+        for t in heatmap_df.index
+    ]
+
+    fig = go.Figure(data=go.Heatmap(
+        z=heatmap_df.values,
+        x=[d.capitalize() for d in dims],
+        y=heatmap_df.index.tolist(),
+        colorscale="RdYlGn",
+        zmid=0,
+        text=heatmap_df.round(2).values,
+        texttemplate="%{text}",
+        hovertemplate="Stock: %{y}<br>Factor: %{x}<br>Z-score: %{z:.2f}<extra></extra>",
+    ))
+    fig.update_layout(title="Style Score Heatmap", height=700)
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Radar chart — portfolio vs benchmark (zero)
+    st.subheader("Portfolio Factor Profile vs Nifty 500 Baseline")
+    fig_radar = go.Figure()
+    fig_radar.add_trace(go.Scatterpolar(
+        r=port_scores[dims].values.tolist() + [port_scores[dims[0]]],
+        theta=[d.capitalize() for d in dims] + [dims[0].capitalize()],
+        fill="toself", name="Portfolio", line_color="#3498db",
+    ))
+    fig_radar.add_trace(go.Scatterpolar(
+        r=[0] * (len(dims) + 1),
+        theta=[d.capitalize() for d in dims] + [dims[0].capitalize()],
+        fill="toself", name="Nifty 500 Baseline", line_color="#95a5a6",
+        line_dash="dash",
+    ))
+    fig_radar.update_layout(polar=dict(radialaxis=dict(range=[-2, 2])), height=450)
+    st.plotly_chart(fig_radar, use_container_width=True)
+
+    # Sortable table
+    st.subheader("Sortable Factor Table")
+    sort_dim = st.selectbox("Sort by", dims, index=0)
+    sortable = style_scores.merge(portfolio[["ticker", "name"]], on="ticker")
+    sortable = sortable[["name", "ticker"] + dims].sort_values(sort_dim, ascending=False)
+    st.dataframe(sortable.rename(columns={"name": "Stock", "ticker": "Ticker"}).reset_index(drop=True),
+                 hide_index=True, use_container_width=True)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 4 — placeholder (will be filled in Task 14)
