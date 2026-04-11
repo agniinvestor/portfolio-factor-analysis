@@ -47,3 +47,23 @@ def test_load_portfolio_adds_ticker_column():
     df = load_portfolio("portfolio.xlsx")
     assert "ticker" in df.columns
     assert df["ticker"].notna().all()
+
+import time
+from pathlib import Path
+from data.cache_manager import is_stale, write_cache, read_cache
+
+def test_missing_cache_is_stale(tmp_path):
+    assert is_stale(tmp_path / "nonexistent.parquet") is True
+
+def test_fresh_cache_is_not_stale(tmp_path):
+    p = tmp_path / "test.parquet"
+    df = pd.DataFrame({"a": [1, 2]})
+    write_cache(df, p)
+    assert is_stale(p, max_age_hours=24) is False
+
+def test_write_and_read_roundtrip(tmp_path):
+    p = tmp_path / "test.parquet"
+    df = pd.DataFrame({"x": [1.0, 2.0], "y": ["a", "b"]})
+    write_cache(df, p)
+    result = read_cache(p)
+    pd.testing.assert_frame_equal(result, df)
