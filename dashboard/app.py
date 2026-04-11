@@ -8,7 +8,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from pathlib import Path
 from data.portfolio import load_portfolio
-from data.fetcher import fetch_iima_factors, fetch_all_fundamentals, fetch_tickertape_prices, compute_monthly_returns
+from data.fetcher import fetch_iima_factors, fetch_all_fundamentals, fetch_tickertape_prices, fetch_all_prices, compute_monthly_returns
 from data.cache_manager import is_stale, CACHE_DIR
 from factors.scorer import compute_style_scores, compute_portfolio_scores
 from factors.regression import build_portfolio_returns, run_carhart_regression
@@ -116,14 +116,7 @@ with tab2:
 
     @st.cache_data(show_spinner="Fetching price history…")
     def get_all_prices(tickers_tuple, force):
-        all_returns = {}
-        for ticker in tickers_tuple:
-            try:
-                prices = fetch_tickertape_prices(ticker, years=6, force_refresh=force)
-                all_returns[ticker] = compute_monthly_returns(prices)
-            except Exception:
-                pass
-        return pd.DataFrame(all_returns)
+        return fetch_all_prices(list(tickers_tuple), years=6, force_refresh=force)
 
     stock_returns_df = get_all_prices(tuple(portfolio["ticker"].tolist()), force_refresh)
     weights_dict = portfolio.set_index("ticker")["weight"].to_dict()

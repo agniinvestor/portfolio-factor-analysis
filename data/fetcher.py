@@ -183,59 +183,65 @@ def fetch_all_fundamentals(tickers: list[str], force_refresh: bool = False) -> p
 
 
 PRICES_CACHE = CACHE_DIR / "stock_prices.parquet"
+_PRICE_SNAPSHOT_PATH = Path(__file__).parent.parent / "data" / "price_returns_snapshot.csv"
+
+
+def _load_price_snapshot() -> pd.DataFrame:
+    """Load committed monthly-returns snapshot; index = datetime, columns = tickers."""
+    if _PRICE_SNAPSHOT_PATH.exists():
+        df = pd.read_csv(_PRICE_SNAPSHOT_PATH, index_col=0, parse_dates=True)
+        df.index = pd.to_datetime(df.index).tz_localize(None)
+        return df
+    return pd.DataFrame()
 
 
 def fetch_tickertape_prices(ticker: str, years: int = 5, force_refresh: bool = False) -> pd.DataFrame:
-    """Fetch monthly closing prices from Tickertape for a given NSE ticker.
+    """Fetch monthly closing prices for a given NSE ticker via yfinance.
 
     Returns DataFrame with columns: date (datetime), price (float).
-    Falls back to NSE historical data if Tickertape layout changes.
     """
     cache_path = CACHE_DIR / f"prices_{ticker}.parquet"
     if not force_refresh and not is_stale(cache_path):
         return read_cache(cache_path)
 
-    # Tickertape exposes historical price data via JSON endpoint
-    api_url = f"https://api.tickertape.in/stocks/charts/inter/{ticker}?duration={years}y&type=price"
-    headers = {"User-Agent": "Mozilla/5.0 (compatible; research-bot/1.0)"}
-    resp = requests.get(api_url, headers=headers, timeout=30)
-
-    if resp.status_code == 200:
-        data = resp.json()
-        points = data.get("data", {}).get("points", [])
-        records = [{"date": pd.to_datetime(p["date"]), "price": p["value"]} for p in points]
-    else:
-        # Fallback: NSE historical data
-        records = _fetch_nse_historical(ticker, years)
-
-    df = pd.DataFrame(records)
-    if df.empty:
+    try:
+        import yfinance as yf
+        raw = yf.download(
+            f"{ticker}.NS", period=f"{years}y", interval="1mo",
+            auto_adjust=True, progress=False
+        )["Close"]
+        if raw.empty:
+            raise ValueError("empty")
+        raw.index = pd.to_datetime(raw.index).tz_localize(None)
+        df = raw.reset_index()
+        df.columns = ["date", "price"]
+        df = df.dropna()
+        write_cache(df, cache_path)
         return df
-    df = df.sort_values("date").reset_index(drop=True)
-    # Resample to month-end
-    df = df.set_index("date").resample("ME")["price"].last().reset_index()
-    write_cache(df, cache_path)
-    time.sleep(1.0)
-    return df
+    except Exception:
+        return pd.DataFrame(columns=["date", "price"])
 
 
-def _fetch_nse_historical(ticker: str, years: int) -> list[dict]:
-    """Fallback: fetch historical data from NSE for a given ticker."""
-    from datetime import date, timedelta
-    end = date.today()
-    start = end - timedelta(days=365 * years)
-    url = (
-        f"https://www.nseindia.com/api/historical/cm/equity"
-        f"?symbol={ticker}&series=EQ"
-        f"&from={start.strftime('%d-%m-%Y')}&to={end.strftime('%d-%m-%Y')}"
-    )
-    session = requests.Session()
-    session.get("https://www.nseindia.com", headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-    resp = session.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
-    if resp.status_code != 200:
-        return []
-    rows = resp.json().get("data", [])
-    return [{"date": pd.to_datetime(r["CH_TIMESTAMP"]), "price": float(r["CH_CLOSING_PRICE"])} for r in rows]
+def fetch_all_prices(tickers: list[str], years: int = 6, force_refresh: bool = False) -> pd.DataFrame:
+    """Return a DataFrame of monthly returns indexed by date, columns = tickers.
+
+    Tries yfinance first; falls back to the committed price_returns_snapshot.csv.
+    """
+    try:
+        import yfinance as yf
+        yf_tickers = [f"{t}.NS" for t in tickers]
+        raw = yf.download(yf_tickers, period=f"{years}y", interval="1mo",
+                          auto_adjust=True, progress=False)["Close"]
+        raw.columns = [c.replace(".NS", "") for c in raw.columns]
+        raw.index = pd.to_datetime(raw.index).tz_localize(None)
+        returns = raw.pct_change().dropna(how="all")
+        if not returns.empty:
+            return returns
+    except Exception:
+        pass
+
+    # Fallback: committed snapshot
+    return _load_price_snapshot()
 
 
 def compute_monthly_returns(prices_df: pd.DataFrame) -> pd.Series:
