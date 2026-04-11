@@ -95,3 +95,38 @@ def test_parse_iima_csv_converts_percent_to_decimal():
     df = parse_iima_csv(SAMPLE_IIMA_CSV)
     # Values in CSV are percentages (e.g. 2.5 means 2.5%), stored as decimals (0.025)
     assert abs(df.iloc[0]["mkt_rf"] - 0.025) < 1e-6
+
+from data.fetcher import parse_screener_fundamentals
+
+SAMPLE_SCREENER_HTML = """
+<html><body>
+<section id="top-ratios">
+  <li><span class="name">Stock P/E</span><span class="value">22.5</span></li>
+  <li><span class="name">Price to book value</span><span class="value">3.1</span></li>
+  <li><span class="name">Return on equity</span><span class="value">18.2%</span></li>
+  <li><span class="name">Return on capital employed</span><span class="value">24.1%</span></li>
+  <li><span class="name">Debt to equity</span><span class="value">0.45</span></li>
+  <li><span class="name">Market Capitalization</span><span class="value">₹1,23,456 Cr.</span></li>
+</section>
+</body></html>
+"""
+
+def test_parse_screener_fundamentals_returns_dict():
+    result = parse_screener_fundamentals(SAMPLE_SCREENER_HTML)
+    assert isinstance(result, dict)
+
+def test_parse_screener_fundamentals_extracts_pe():
+    result = parse_screener_fundamentals(SAMPLE_SCREENER_HTML)
+    assert abs(result["pe"] - 22.5) < 0.01
+
+def test_parse_screener_fundamentals_extracts_pb():
+    result = parse_screener_fundamentals(SAMPLE_SCREENER_HTML)
+    assert abs(result["pb"] - 3.1) < 0.01
+
+def test_parse_screener_fundamentals_extracts_roe():
+    result = parse_screener_fundamentals(SAMPLE_SCREENER_HTML)
+    assert abs(result["roe"] - 18.2) < 0.01
+
+def test_parse_screener_fundamentals_extracts_market_cap():
+    result = parse_screener_fundamentals(SAMPLE_SCREENER_HTML)
+    assert result["market_cap_cr"] == 123456.0
