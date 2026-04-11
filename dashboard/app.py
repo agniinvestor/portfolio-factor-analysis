@@ -423,3 +423,165 @@ with tab5:
     narrative += size_note
 
     st.info(f"*{narrative}*")
+
+    # ── Section B: Investment Memo ─────────────────────────────────────────────
+    st.markdown("### Investment Memo")
+
+    # Expander 1: Factor Tilts
+    with st.expander("Factor Tilts", expanded=True):
+        def _factor_interp(f, b, sig):
+            if not sig:
+                return "No statistically significant exposure"
+            if f == "mkt_rf":
+                if b > 1.1:
+                    return "Aggressive market exposure — amplifies index moves"
+                elif b < 0.9:
+                    return "Defensive market exposure — lower sensitivity to index"
+                else:
+                    return "Neutral market exposure — tracks index closely"
+            elif f == "smb":
+                if b > 0.2:
+                    return "Positive size tilt — overweight small/mid caps"
+                else:
+                    return "Negative size tilt — large-cap bias"
+            elif f == "hml":
+                if b > 0.2:
+                    return "Positive value tilt — cheaper stocks by P/B"
+                else:
+                    return "Growth tilt — higher-valuation stocks"
+            elif f == "wml":
+                if b > 0.2:
+                    return "Momentum tilt — recent winners overweighted"
+                else:
+                    return "Contrarian tilt — recent underperformers"
+            return ""
+
+        memo_rows = []
+        for f in factors_display_p5:
+            b = reg_result["betas"][f]
+            t = reg_result["t_stats"][f]
+            p = reg_result["p_values"][f]
+            sig = p < 0.05
+            memo_rows.append({
+                "Factor": factor_labels_p5[f],
+                "Beta": round(b, 3),
+                "t-stat": round(t, 2),
+                "p-value": round(p, 3),
+                "Sig (5%)": "✓" if sig else "—",
+                "Interpretation": _factor_interp(f, b, sig),
+            })
+        st.dataframe(pd.DataFrame(memo_rows), hide_index=True, use_container_width=True)
+
+    # Expander 2: Style Characteristics
+    with st.expander("Style Characteristics", expanded=False):
+        NIFTY500_SNAPSHOT_PATH = str(
+            Path(__file__).parent.parent / "data" / "nifty500_screener_snapshot.csv"
+        )
+        nifty_pct = compute_nifty500_percentile_scores(port_scores, NIFTY500_SNAPSHOT_PATH)
+
+        fig_radar2 = go.Figure()
+        fig_radar2.add_trace(go.Scatterpolar(
+            r=port_scores[dims_6].values.tolist() + [port_scores[dims_6[0]]],
+            theta=[d.capitalize() for d in dims_6] + [dims_6[0].capitalize()],
+            fill="toself", name="Portfolio", line_color="#3498db",
+        ))
+        fig_radar2.add_trace(go.Scatterpolar(
+            r=[0] * (len(dims_6) + 1),
+            theta=[d.capitalize() for d in dims_6] + [dims_6[0].capitalize()],
+            fill="toself", name="Nifty 500 Baseline", line_color="#95a5a6",
+            line_dash="dash",
+        ))
+        fig_radar2.update_layout(
+            polar=dict(radialaxis=dict(range=[-2, 2])),
+            height=500,
+            title="Portfolio Style vs Nifty 500 Baseline",
+        )
+        st.plotly_chart(fig_radar2, use_container_width=True)
+
+        def _style_interp(z):
+            if z > 0.5:
+                return "Strong positive tilt"
+            elif z > 0.2:
+                return "Mild positive tilt"
+            elif z < -0.5:
+                return "Strong negative tilt"
+            elif z < -0.2:
+                return "Mild negative tilt"
+            else:
+                return "Neutral"
+
+        style_rows = []
+        for d in dims_6:
+            z = port_scores[d]
+            style_rows.append({
+                "Dimension": d.capitalize(),
+                "Portfolio Z-Score": round(z, 3),
+                "Nifty 500 Percentile": nifty_pct.get(d, 50.0),
+                "Interpretation": _style_interp(z),
+            })
+        style_df = pd.DataFrame(style_rows).sort_values(
+            "Portfolio Z-Score", key=abs, ascending=False
+        )
+        st.dataframe(style_df, hide_index=True, use_container_width=True)
+
+    # Expander 3: Risk Profile
+    with st.expander("Risk Profile", expanded=False):
+        if hhi < 0.1:
+            hhi_label = "Diversified"
+        elif hhi < 0.18:
+            hhi_label = "Moderate concentration"
+        else:
+            hhi_label = "Concentrated"
+
+        top5_weight = portfolio.nlargest(5, "weight")["weight"].sum() * 100
+        top2_sectors = (
+            portfolio.groupby("sector")["weight"].sum()
+            .nlargest(2)
+            .reset_index()
+        )
+        sector_hhi = (portfolio.groupby("sector")["weight"].sum() ** 2).sum()
+
+        rc1, rc2 = st.columns(2)
+        with rc1:
+            st.markdown("**Stock Concentration**")
+            st.metric("HHI", f"{hhi:.4f}", hhi_label)
+            st.metric("Effective N", f"{effective_n:.1f}")
+            st.metric("Top 5 Holdings Weight", f"{top5_weight:.1f}%")
+
+        with rc2:
+            st.markdown("**Sector Concentration**")
+            st.metric("Sector HHI", f"{sector_hhi:.4f}")
+            for _, row in top2_sectors.iterrows():
+                st.metric(row["sector"], f"{row['weight']*100:.1f}%")
+
+        st.markdown("**Factor R² Breakdown**")
+        try:
+            factors_idx = iima_factors.set_index("date")[["mkt_rf", "smb", "hml", "wml", "rf"]]
+            aligned_p, aligned_f = port_returns.align(factors_idx, join="inner")
+            port_excess_series = aligned_p - aligned_f["rf"]
+            port_var = port_excess_series.var()
+
+            factor_stds = {f: aligned_f[f].std() for f in ["mkt_rf", "smb", "hml", "wml"]}
+            factor_variances = {
+                f: (reg_result["betas"][f] * factor_stds[f]) ** 2
+                for f in ["mkt_rf", "smb", "hml", "wml"]
+            }
+            residual_share = max(0.0, 1 - reg_result["r_squared"])
+            total_explained = sum(factor_variances.values())
+            if port_var > 0 and total_explained > 0:
+                pie_labels = [factor_labels_p5[f] for f in ["mkt_rf", "smb", "hml", "wml"]] + ["Residual"]
+                pie_values = [
+                    factor_variances[f] / port_var * 100
+                    for f in ["mkt_rf", "smb", "hml", "wml"]
+                ] + [residual_share * 100]
+                pie_colors = ["#3498db", "#2ecc71", "#e67e22", "#9b59b6", "#95a5a6"]
+                fig_pie = go.Figure(go.Pie(
+                    labels=pie_labels,
+                    values=pie_values,
+                    marker_colors=pie_colors,
+                    textinfo="label+percent",
+                ))
+                fig_pie.update_layout(height=350, title="Variance Explained by Factor")
+                st.plotly_chart(fig_pie, use_container_width=True)
+        except Exception as e:
+            st.caption(f"R² breakdown unavailable: {e}")
