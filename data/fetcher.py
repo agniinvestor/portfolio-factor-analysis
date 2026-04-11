@@ -151,14 +151,32 @@ def fetch_screener_fundamentals(ticker: str, force_refresh: bool = False) -> dic
     return data
 
 
+_SNAPSHOT_PATH = Path(__file__).parent.parent / "data" / "screener_snapshot.csv"
+
+
+def _load_snapshot() -> pd.DataFrame:
+    """Load the committed Screener.in snapshot CSV, or return empty DataFrame."""
+    if _SNAPSHOT_PATH.exists():
+        return pd.read_csv(_SNAPSHOT_PATH)
+    return pd.DataFrame()
+
+
 def fetch_all_fundamentals(tickers: list[str], force_refresh: bool = False) -> pd.DataFrame:
     """Fetch fundamentals for all tickers; return one row per ticker.
 
-    Stocks where Screener.in fetch fails will have NaN for fundamental columns.
+    Falls back to the committed screener_snapshot.csv when Screener.in is unreachable.
     """
+    snapshot = _load_snapshot()
+
     rows = []
     for ticker in tickers:
         data = fetch_screener_fundamentals(ticker, force_refresh=force_refresh)
+        # If live fetch returned nothing, try the snapshot
+        if not any(k != "ticker" for k in data):
+            if not snapshot.empty and ticker in snapshot["ticker"].values:
+                snap_row = snapshot[snapshot["ticker"] == ticker].iloc[0].to_dict()
+                snap_row["ticker"] = ticker
+                data = snap_row
         data["ticker"] = ticker
         rows.append(data)
     return pd.DataFrame(rows)
