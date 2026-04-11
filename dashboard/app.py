@@ -46,7 +46,10 @@ def get_iima(force):
 
 @st.cache_data(show_spinner="Fetching stock fundamentals from Screener.in…")
 def get_fundamentals(tickers_tuple, force):
-    return fetch_all_fundamentals(list(tickers_tuple), force_refresh=force)
+    try:
+        return fetch_all_fundamentals(list(tickers_tuple), force_refresh=force)
+    except Exception:
+        return pd.DataFrame({"ticker": list(tickers_tuple)})
 
 iima_factors = get_iima(force_refresh)
 fundamentals = get_fundamentals(tuple(portfolio["ticker"].tolist()), force_refresh)

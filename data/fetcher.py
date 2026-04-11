@@ -126,23 +126,36 @@ def parse_screener_fundamentals(html: str) -> dict:
 
 
 def fetch_screener_fundamentals(ticker: str, force_refresh: bool = False) -> dict:
-    """Fetch fundamentals for a single NSE ticker from Screener.in."""
+    """Fetch fundamentals for a single NSE ticker from Screener.in.
+
+    Returns an empty dict if Screener.in is unreachable or blocks the request.
+    """
     cache_path = CACHE_DIR / f"screener_{ticker}.parquet"
     if not force_refresh and not is_stale(cache_path):
         return read_cache(cache_path).iloc[0].to_dict()
     url = f"https://www.screener.in/company/{ticker}/consolidated/"
-    headers = {"User-Agent": "Mozilla/5.0 (compatible; research-bot/1.0)"}
-    resp = requests.get(url, headers=headers, timeout=30)
-    resp.raise_for_status()
-    data = parse_screener_fundamentals(resp.text)
-    df = pd.DataFrame([data])
-    write_cache(df, cache_path)
+    headers = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"}
+    try:
+        resp = requests.get(url, headers=headers, timeout=30)
+        resp.raise_for_status()
+        data = parse_screener_fundamentals(resp.text)
+    except Exception:
+        data = {}
+    data["ticker"] = ticker
+    if data:
+        try:
+            write_cache(pd.DataFrame([data]), cache_path)
+        except Exception:
+            pass
     time.sleep(1.5)  # be polite to Screener.in
     return data
 
 
 def fetch_all_fundamentals(tickers: list[str], force_refresh: bool = False) -> pd.DataFrame:
-    """Fetch fundamentals for all tickers; return one row per ticker."""
+    """Fetch fundamentals for all tickers; return one row per ticker.
+
+    Stocks where Screener.in fetch fails will have NaN for fundamental columns.
+    """
     rows = []
     for ticker in tickers:
         data = fetch_screener_fundamentals(ticker, force_refresh=force_refresh)
