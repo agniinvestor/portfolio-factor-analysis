@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import statsmodels.api as sm
 from dateutil.relativedelta import relativedelta
+from statsmodels.regression.rolling import RollingOLS
 
 
 def build_portfolio_returns(
@@ -66,3 +67,62 @@ def run_carhart_regression(
         "r_squared": model.rsquared,
         "n_obs": int(model.nobs),
     }
+
+
+def rolling_carhart_betas(
+    portfolio_returns: pd.Series,
+    factor_returns: pd.DataFrame,
+    window_months: int = 24,
+) -> pd.DataFrame:
+    """Compute rolling Carhart 4-factor betas.
+
+    Args:
+        portfolio_returns: Monthly portfolio returns (Series, datetime index).
+        factor_returns: DataFrame with columns date, mkt_rf, smb, hml, wml, rf.
+        window_months: Rolling window size in months.
+    Returns:
+        DataFrame indexed by date with columns mkt_rf, smb, hml, wml.
+        Rows before the window fills are NaN.
+    """
+    factors = factor_returns.set_index("date")[["mkt_rf", "smb", "hml", "wml", "rf"]]
+    aligned_port, aligned_fac = portfolio_returns.align(factors, join="inner")
+    port_excess = aligned_port - aligned_fac["rf"]
+
+    X = sm.add_constant(aligned_fac[["mkt_rf", "smb", "hml", "wml"]])
+    rols = RollingOLS(port_excess, X, window=window_months).fit()
+
+    betas = rols.params[["mkt_rf", "smb", "hml", "wml"]].copy()
+    betas.index = port_excess.index
+    return betas
+
+
+def factor_return_attribution(
+    portfolio_returns: pd.Series,
+    factor_returns: pd.DataFrame,
+    reg_result: dict,
+) -> pd.DataFrame:
+    """Decompose monthly portfolio excess returns into factor contributions.
+
+    For each month: alpha + Σ(beta_i * factor_i) + residual = port_excess.
+
+    Args:
+        portfolio_returns: Monthly portfolio returns (Series, datetime index).
+        factor_returns: DataFrame with columns date, mkt_rf, smb, hml, wml, rf.
+        reg_result: Dict returned by run_carhart_regression.
+    Returns:
+        DataFrame indexed by date with columns alpha, mkt_rf, smb, hml, wml, residual.
+    """
+    factors = factor_returns.set_index("date")[["mkt_rf", "smb", "hml", "wml", "rf"]]
+    aligned_port, aligned_fac = portfolio_returns.align(factors, join="inner")
+    port_excess = aligned_port - aligned_fac["rf"]
+
+    result = pd.DataFrame(index=port_excess.index)
+    result["alpha"] = reg_result["alpha"]
+
+    factor_cols = ["mkt_rf", "smb", "hml", "wml"]
+    for f in factor_cols:
+        result[f] = reg_result["betas"][f] * aligned_fac[f]
+
+    explained = result["alpha"] + result[factor_cols].sum(axis=1)
+    result["residual"] = port_excess - explained
+    return result

@@ -59,3 +59,53 @@ def test_build_portfolio_returns_weighted_correctly():
     weights = {"A": 0.6, "B": 0.4}
     result = build_portfolio_returns(stock_returns, weights)
     assert abs(result.iloc[0] - (0.6 * 0.10 + 0.4 * 0.30)) < 1e-9
+
+
+from factors.regression import rolling_carhart_betas, factor_return_attribution
+
+
+def test_rolling_carhart_betas_returns_dataframe():
+    result = rolling_carhart_betas(PORT_RETURNS, FACTORS, window_months=12)
+    assert isinstance(result, pd.DataFrame)
+
+
+def test_rolling_carhart_betas_has_factor_columns():
+    result = rolling_carhart_betas(PORT_RETURNS, FACTORS, window_months=12)
+    for col in ["mkt_rf", "smb", "hml", "wml"]:
+        assert col in result.columns, f"Missing column: {col}"
+
+
+def test_rolling_carhart_betas_index_is_datetime():
+    result = rolling_carhart_betas(PORT_RETURNS, FACTORS, window_months=12)
+    assert pd.api.types.is_datetime64_any_dtype(result.index)
+
+
+def test_rolling_carhart_betas_has_valid_rows():
+    result = rolling_carhart_betas(PORT_RETURNS, FACTORS, window_months=12)
+    valid = result.dropna()
+    assert len(valid) > 0
+
+
+def test_factor_return_attribution_returns_dataframe():
+    reg_result = run_carhart_regression(PORT_RETURNS, FACTORS, window_years=3)
+    result = factor_return_attribution(PORT_RETURNS, FACTORS, reg_result)
+    assert isinstance(result, pd.DataFrame)
+
+
+def test_factor_return_attribution_has_required_columns():
+    reg_result = run_carhart_regression(PORT_RETURNS, FACTORS, window_years=3)
+    result = factor_return_attribution(PORT_RETURNS, FACTORS, reg_result)
+    for col in ["alpha", "mkt_rf", "smb", "hml", "wml", "residual"]:
+        assert col in result.columns, f"Missing column: {col}"
+
+
+def test_factor_return_attribution_sums_to_port_excess():
+    reg_result = run_carhart_regression(PORT_RETURNS, FACTORS, window_years=3)
+    result = factor_return_attribution(PORT_RETURNS, FACTORS, reg_result)
+    contrib_cols = ["alpha", "mkt_rf", "smb", "hml", "wml", "residual"]
+    row_sums = result[contrib_cols].sum(axis=1)
+    factors_indexed = FACTORS.set_index("date")[["mkt_rf", "smb", "hml", "wml", "rf"]]
+    aligned_port, aligned_fac = PORT_RETURNS.align(factors_indexed, join="inner")
+    port_excess = aligned_port - aligned_fac["rf"]
+    port_excess_aligned = port_excess.reindex(result.index)
+    np.testing.assert_allclose(row_sums.values, port_excess_aligned.values, atol=1e-10)
