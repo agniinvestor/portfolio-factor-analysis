@@ -23,3 +23,27 @@ def test_all_33_holdings_mapped():
     ]
     for isin in portfolio_isins:
         assert isin in mapping, f"Missing ticker for ISIN {isin}"
+
+import pandas as pd
+from data.portfolio import load_portfolio
+
+def test_load_portfolio_returns_dataframe():
+    df = load_portfolio("portfolio.xlsx")
+    assert isinstance(df, pd.DataFrame)
+
+def test_load_portfolio_has_required_columns():
+    df = load_portfolio("portfolio.xlsx")
+    assert set(["name", "isin", "sector", "weight", "value"]).issubset(df.columns)
+
+def test_load_portfolio_weights_sum_to_one():
+    df = load_portfolio("portfolio.xlsx")
+    assert abs(df["weight"].sum() - 1.0) < 0.001
+
+def test_load_portfolio_has_33_rows():
+    df = load_portfolio("portfolio.xlsx")
+    assert len(df) == 33
+
+def test_load_portfolio_adds_ticker_column():
+    df = load_portfolio("portfolio.xlsx")
+    assert "ticker" in df.columns
+    assert df["ticker"].notna().all()
