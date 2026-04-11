@@ -255,7 +255,71 @@ with tab3:
                  hide_index=True, use_container_width=True)
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# TAB 4 — placeholder (will be filled in Task 14)
+# TAB 4 — Stock Deep-Dive
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab4:
-    st.info("Stock Deep-Dive tab — coming soon.")
+    st.subheader("Stock Deep-Dive")
+
+    stock_options = portfolio[["name", "ticker"]].apply(
+        lambda r: f"{r['name']} ({r['ticker']})", axis=1
+    ).tolist()
+    selected = st.selectbox("Select a holding", stock_options)
+    selected_ticker = selected.split("(")[-1].rstrip(")")
+    selected_row = portfolio[portfolio["ticker"] == selected_ticker].iloc[0]
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Sector", selected_row["sector"])
+    col2.metric("Portfolio Weight", f"{selected_row['weight']*100:.2f}%")
+    col3.metric("Value (INR)", f"₹{selected_row['value']:,.0f}")
+
+    # Style profile for selected stock
+    if "style_scores" in dir():
+        stock_scores = style_scores[style_scores["ticker"] == selected_ticker]
+        if not stock_scores.empty:
+            st.subheader("Style Profile")
+            dims = ["value", "quality", "momentum", "size", "growth", "profitability"]
+            scores_row = stock_scores.iloc[0]
+            score_data = pd.DataFrame({
+                "Dimension": [d.capitalize() for d in dims],
+                "Z-Score": [round(scores_row[d], 3) for d in dims],
+                "Interpretation": [
+                    "Cheap vs peers" if scores_row[d] > 0.5
+                    else "Expensive vs peers" if scores_row[d] < -0.5
+                    else "Neutral"
+                    if d == "value" else
+                    "Strong" if scores_row[d] > 0.5
+                    else "Weak" if scores_row[d] < -0.5
+                    else "Neutral"
+                    for d in dims
+                ]
+            })
+            st.dataframe(score_data, hide_index=True, use_container_width=True)
+
+            # Mini radar for single stock
+            fig_single = go.Figure(go.Scatterpolar(
+                r=[scores_row[d] for d in dims] + [scores_row[dims[0]]],
+                theta=[d.capitalize() for d in dims] + [dims[0].capitalize()],
+                fill="toself", line_color="#e67e22",
+            ))
+            fig_single.update_layout(
+                polar=dict(radialaxis=dict(range=[-3, 3])),
+                title=f"Factor Profile: {selected_row['name']}",
+                height=400,
+            )
+            st.plotly_chart(fig_single, use_container_width=True)
+
+    # External links
+    st.subheader("Research Links")
+    screener_url = f"https://www.screener.in/company/{selected_ticker}/consolidated/"
+    tickertape_url = f"https://www.tickertape.in/stocks/{selected_ticker.lower()}-{selected_ticker}"
+    st.markdown(f"- [Screener.in — {selected_ticker}]({screener_url})")
+    st.markdown(f"- [Tickertape — {selected_ticker}]({tickertape_url})")
+
+    st.divider()
+    st.subheader("Full Research Report")
+    st.info(
+        f"To generate a full Buy/Sell/Hold research report for **{selected_row['name']}**, "
+        f"invoke the `india-equity-report` skill in a Claude Code session:\n\n"
+        f"```\nAnalyse {selected_ticker} NSE\n```\n\n"
+        f"The skill is installed globally at `~/.claude/skills/india-equity-report/`."
+    )
