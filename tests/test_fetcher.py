@@ -130,3 +130,23 @@ def test_parse_screener_fundamentals_extracts_roe():
 def test_parse_screener_fundamentals_extracts_market_cap():
     result = parse_screener_fundamentals(SAMPLE_SCREENER_HTML)
     assert result["market_cap_cr"] == 123456.0
+
+from data.fetcher import compute_monthly_returns
+
+def test_compute_monthly_returns_from_prices():
+    prices = pd.DataFrame({
+        "date": pd.date_range("2023-01-01", periods=4, freq="MS"),
+        "price": [100.0, 110.0, 105.0, 115.0]
+    })
+    returns = compute_monthly_returns(prices)
+    assert isinstance(returns, pd.Series)
+    assert len(returns) == 3  # n-1 returns from n prices
+    assert abs(returns.iloc[0] - 0.10) < 0.001   # (110-100)/100
+
+def test_compute_monthly_returns_index_is_datetime():
+    prices = pd.DataFrame({
+        "date": pd.date_range("2023-01-01", periods=3, freq="MS"),
+        "price": [100.0, 110.0, 105.0]
+    })
+    returns = compute_monthly_returns(prices)
+    assert pd.api.types.is_datetime64_any_dtype(returns.index)
