@@ -101,10 +101,81 @@ with tab1:
             hide_index=True, use_container_width=True)
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# TAB 2 — placeholder (will be filled in Task 12)
+# TAB 2 — Factor Regression
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab2:
-    st.info("Factor Regression tab — coming soon.")
+    st.subheader(f"Carhart 4-Factor Regression ({window_years}Y window)")
+    st.caption("Source: IIMA Indian Fama-French-Momentum dataset (survivorship-bias adjusted)")
+
+    @st.cache_data(show_spinner="Fetching price history…")
+    def get_all_prices(tickers_tuple, force):
+        all_returns = {}
+        for ticker in tickers_tuple:
+            try:
+                prices = fetch_tickertape_prices(ticker, years=6, force_refresh=force)
+                all_returns[ticker] = compute_monthly_returns(prices)
+            except Exception:
+                pass
+        return pd.DataFrame(all_returns)
+
+    stock_returns_df = get_all_prices(tuple(portfolio["ticker"].tolist()), force_refresh)
+    weights_dict = portfolio.set_index("ticker")["weight"].to_dict()
+
+    if stock_returns_df.empty:
+        st.warning("No price data available. Click Refresh Data to fetch.")
+    else:
+        port_returns = build_portfolio_returns(stock_returns_df, weights_dict)
+        reg_result = run_carhart_regression(port_returns, iima_factors, window_years=window_years)
+
+        factors_display = ["mkt_rf", "smb", "hml", "wml"]
+        factor_labels = {"mkt_rf": "Market (Rm-Rf)", "smb": "Size (SMB)",
+                         "hml": "Value (HML)", "wml": "Momentum (WML)"}
+
+        # Summary metrics
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Alpha (monthly)", f"{reg_result['alpha']*100:.3f}%",
+                    f"t = {reg_result['alpha_t']:.2f}")
+        col2.metric("R²", f"{reg_result['r_squared']:.3f}")
+        col3.metric("Observations", reg_result["n_obs"])
+
+        # Factor table
+        reg_rows = []
+        for f in factors_display:
+            sig = "✓" if reg_result["p_values"][f] < 0.05 else "—"
+            reg_rows.append({
+                "Factor": factor_labels[f],
+                "Beta": round(reg_result["betas"][f], 3),
+                "t-stat": round(reg_result["t_stats"][f], 2),
+                "p-value": round(reg_result["p_values"][f], 3),
+                "Significant (5%)": sig,
+            })
+        reg_df = pd.DataFrame(reg_rows)
+        st.dataframe(reg_df, hide_index=True, use_container_width=True)
+
+        # Beta bar chart
+        fig = go.Figure()
+        colors = ["#2ecc71" if b > 0 else "#e74c3c" for b in reg_result["betas"].values()]
+        fig.add_trace(go.Bar(
+            x=[factor_labels[f] for f in factors_display],
+            y=[reg_result["betas"][f] for f in factors_display],
+            marker_color=colors,
+        ))
+        fig.add_hline(y=0, line_width=1, line_color="gray")
+        fig.update_layout(title="Factor Betas", yaxis_title="Beta", height=350)
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Plain-English summary
+        tilts = []
+        for f in factors_display:
+            if reg_result["p_values"][f] < 0.05:
+                b = reg_result["betas"][f]
+                label = factor_labels[f]
+                direction = "positive" if b > 0 else "negative"
+                tilts.append(f"{direction} {label} (β={b:.2f})")
+        if tilts:
+            st.info("**Significant factor tilts:** " + ", ".join(tilts) + ".")
+        else:
+            st.info("No statistically significant factor tilts detected at 5% level.")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 3 — placeholder (will be filled in Task 13)
