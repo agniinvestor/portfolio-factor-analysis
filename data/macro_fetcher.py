@@ -47,7 +47,14 @@ FACTOR_MATRIX: dict[str, dict[str, str]] = {
 FACTORS: list[str] = ["Mkt Beta", "Size", "Value", "Momentum", "Quality", "Low Vol", "Growth"]
 
 YIELD_TICKERS: dict[str, str] = {
-    "US": "^TNX", "India": "IN10Y=X", "Japan": "JP10Y=X", "Europe": "DE10Y=X",
+    "US": "^TNX",
+}
+
+# FRED monthly 10Y government bond yield series (for regions where yfinance is unreliable)
+YIELD_FRED_SERIES: dict[str, str] = {
+    "India":  "INDIRLTLT01STM",
+    "Japan":  "IRLTLT01JPM156N",
+    "Europe": "IRLTLT01DEM156N",
 }
 EQUITY_TICKERS: dict[str, str] = {
     "India": "^BSESN", "Japan": "^N225", "Europe": "^STOXX50E",
@@ -117,6 +124,44 @@ def _fetch_rates_signal(region: str, ticker: str) -> str:
         return "rising" if diff > 0 else "falling"
     except Exception as exc:
         logger.warning("rates: fetch failed for %s (%s): %s", region, ticker, exc)
+        return "unknown"
+
+
+def _fetch_rates_signal_fred(region: str, series_id: str, fred_api_key: Optional[str]) -> str:
+    """Fetch 10Y yield from FRED monthly series. Compare latest vs 3 months ago."""
+    if not fred_api_key:
+        logger.warning("rates_fred(%s): no FRED api_key; returning unknown", region)
+        return "unknown"
+    try:
+        params = {
+            "series_id": series_id,
+            "api_key": fred_api_key,
+            "file_type": "json",
+            "sort_order": "desc",
+            "limit": 6,
+        }
+        resp = requests.get(FRED_URL, params=params, timeout=15)
+        resp.raise_for_status()
+        obs = resp.json().get("observations", [])
+        values: list[float] = []
+        for o in obs:
+            v = o.get("value")
+            if v not in (None, ".", ""):
+                try:
+                    values.append(float(v))
+                except ValueError:
+                    pass
+        if len(values) < 4:
+            logger.warning("rates_fred(%s): only %d observations", region, len(values))
+            return "unknown"
+        latest = values[0]
+        prior = values[3]  # ~3 months ago
+        diff = latest - prior
+        if abs(diff) < RATES_BPS_THRESHOLD:
+            return "unknown"
+        return "rising" if diff > 0 else "falling"
+    except Exception as exc:
+        logger.warning("rates_fred(%s): FRED fetch failed: %s", region, exc)
         return "unknown"
 
 
@@ -271,9 +316,11 @@ def fetch_macro_signals(
     regions = ["US", "India", "Japan", "Europe"]
     signals: dict[str, dict[str, str]] = {}
     for region in regions:
-        yield_ticker = YIELD_TICKERS[region]
         cpi_series = CPI_SERIES[region]
-        rates     = _fetch_rates_signal(region, yield_ticker)
+        if region in YIELD_TICKERS:
+            rates = _fetch_rates_signal(region, YIELD_TICKERS[region])
+        else:
+            rates = _fetch_rates_signal_fred(region, YIELD_FRED_SERIES[region], fred_api_key)
         growth    = _fetch_growth_signal(region, fred_api_key)
         inflation = _fetch_inflation_signal(region, cpi_series, fred_api_key)
         regime_label, color = _determine_regime(rates, growth, inflation)

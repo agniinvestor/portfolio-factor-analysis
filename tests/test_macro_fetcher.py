@@ -172,6 +172,47 @@ class TestFetchRatesSignal:
         assert mf._fetch_rates_signal("US", "^TNX") == "unknown"
 
 
+class TestFetchRatesSignalFred:
+    def _make_resp(self, values):
+        obs = [{"value": str(v)} for v in values]
+        return type("R", (), {
+            "raise_for_status": lambda self: None,
+            "json": lambda self: {"observations": obs},
+        })()
+
+    def test_rising_when_latest_above_prior(self, monkeypatch):
+        # values[0]=latest=7.0, values[3]=prior=6.0 → rising
+        resp = self._make_resp([7.0, 6.8, 6.5, 6.0, 5.9, 5.8])
+        monkeypatch.setattr(mf.requests, "get", lambda *a, **kw: resp)
+        assert mf._fetch_rates_signal_fred("India", "INDIRLTLT01STM", "key") == "rising"
+
+    def test_falling_when_latest_below_prior(self, monkeypatch):
+        resp = self._make_resp([5.0, 5.5, 5.8, 6.5, 6.7, 6.9])
+        monkeypatch.setattr(mf.requests, "get", lambda *a, **kw: resp)
+        assert mf._fetch_rates_signal_fred("Japan", "IRLTLT01JPM156N", "key") == "falling"
+
+    def test_flat_returns_unknown(self, monkeypatch):
+        # diff < RATES_BPS_THRESHOLD
+        resp = self._make_resp([6.0, 6.01, 6.02, 6.0, 5.99, 5.98])
+        monkeypatch.setattr(mf.requests, "get", lambda *a, **kw: resp)
+        assert mf._fetch_rates_signal_fred("Europe", "IRLTLT01DEM156N", "key") == "unknown"
+
+    def test_no_api_key_returns_unknown(self, monkeypatch):
+        monkeypatch.setattr(mf.requests, "get", lambda *a, **kw: (_ for _ in ()).throw(AssertionError("should not call")))
+        assert mf._fetch_rates_signal_fred("India", "INDIRLTLT01STM", None) == "unknown"
+
+    def test_too_few_obs_returns_unknown(self, monkeypatch):
+        resp = self._make_resp([6.0, 6.1, 6.2])  # only 3 values, need 4
+        monkeypatch.setattr(mf.requests, "get", lambda *a, **kw: resp)
+        assert mf._fetch_rates_signal_fred("India", "INDIRLTLT01STM", "key") == "unknown"
+
+    def test_request_exception_returns_unknown(self, monkeypatch):
+        def bad_get(*a, **kw):
+            raise RuntimeError("network error")
+        monkeypatch.setattr(mf.requests, "get", bad_get)
+        assert mf._fetch_rates_signal_fred("India", "INDIRLTLT01STM", "key") == "unknown"
+
+
 class TestFetchGrowthSignal:
     def test_us_expanding_when_pmi_above_50_and_rising(self, monkeypatch):
         # Descending order (FRED sort_order=desc): latest first
@@ -353,9 +394,10 @@ class TestFetchMacroSignals:
         cache_file = tmp_path / "macro_regime.json"
         monkeypatch.setattr(mf, "CACHE_PATH", cache_file)
 
-        monkeypatch.setattr(mf, "_fetch_rates_signal",     lambda r, t: "falling")
-        monkeypatch.setattr(mf, "_fetch_growth_signal",    lambda r, k: "expanding")
-        monkeypatch.setattr(mf, "_fetch_inflation_signal", lambda r, s, k: "falling")
+        monkeypatch.setattr(mf, "_fetch_rates_signal",      lambda r, t: "falling")
+        monkeypatch.setattr(mf, "_fetch_rates_signal_fred", lambda r, s, k: "falling")
+        monkeypatch.setattr(mf, "_fetch_growth_signal",     lambda r, k: "expanding")
+        monkeypatch.setattr(mf, "_fetch_inflation_signal",  lambda r, s, k: "falling")
 
         out = mf.fetch_macro_signals(force_refresh=True, fred_api_key="X")
         assert out["US"]["regime"] == "Goldilocks"
@@ -372,9 +414,10 @@ class TestFetchMacroSignals:
                                "color": "#f39c12"}},
         }))
         monkeypatch.setattr(mf, "CACHE_PATH", cache_file)
-        monkeypatch.setattr(mf, "_fetch_rates_signal",     lambda r, t: "falling")
-        monkeypatch.setattr(mf, "_fetch_growth_signal",    lambda r, k: "expanding")
-        monkeypatch.setattr(mf, "_fetch_inflation_signal", lambda r, s, k: "falling")
+        monkeypatch.setattr(mf, "_fetch_rates_signal",      lambda r, t: "falling")
+        monkeypatch.setattr(mf, "_fetch_rates_signal_fred", lambda r, s, k: "falling")
+        monkeypatch.setattr(mf, "_fetch_growth_signal",     lambda r, k: "expanding")
+        monkeypatch.setattr(mf, "_fetch_inflation_signal",  lambda r, s, k: "falling")
 
         out = mf.fetch_macro_signals(force_refresh=False, fred_api_key="X")
         assert out["US"]["regime"] == "Goldilocks"
@@ -382,9 +425,10 @@ class TestFetchMacroSignals:
     def test_output_shape(self, monkeypatch, tmp_path):
         cache_file = tmp_path / "macro_regime.json"
         monkeypatch.setattr(mf, "CACHE_PATH", cache_file)
-        monkeypatch.setattr(mf, "_fetch_rates_signal",     lambda r, t: "rising")
-        monkeypatch.setattr(mf, "_fetch_growth_signal",    lambda r, k: "contracting")
-        monkeypatch.setattr(mf, "_fetch_inflation_signal", lambda r, s, k: "rising")
+        monkeypatch.setattr(mf, "_fetch_rates_signal",      lambda r, t: "rising")
+        monkeypatch.setattr(mf, "_fetch_rates_signal_fred", lambda r, s, k: "rising")
+        monkeypatch.setattr(mf, "_fetch_growth_signal",     lambda r, k: "contracting")
+        monkeypatch.setattr(mf, "_fetch_inflation_signal",  lambda r, s, k: "rising")
 
         out = mf.fetch_macro_signals(force_refresh=True, fred_api_key="X")
         assert set(out.keys()) == {"US", "India", "Japan", "Europe"}
