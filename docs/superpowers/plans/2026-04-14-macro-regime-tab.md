@@ -22,7 +22,7 @@ dashboard/app.py               # MODIFIED — add tab6 + wire render()
 data/cache/macro_regime.json   # NEW — generated at runtime (gitignored via /data/cache)
 ```
 
-Data flow:
+Data flow (as-built, updated 2026-04-14):
 
 ```
 tab_macro_regime.render(signals, force_refresh)
@@ -33,13 +33,34 @@ fetch_macro_signals(force_refresh, fred_api_key)
       |
       +-- read/write data/cache/macro_regime.json (24h TTL)
       |
-      +-- _fetch_rates_signal(region, ticker)           # yfinance
-      +-- _fetch_growth_signal(region, fred_api_key)    # FRED NAPM (US) / yfinance (others)
-      +-- _fetch_inflation_signal(region, series_id, fred_api_key)  # FRED
+      +-- Rates:
+      |     US     → _fetch_rates_signal("US", "^TNX")           # yfinance daily
+      |     Others → _fetch_rates_signal_fred(region, series_id, key)  # FRED monthly
+      |               India=INDIRLTLT01STM, Japan=IRLTLT01JPM156N, Europe=IRLTLT01DEM156N
+      |
+      +-- Growth (all regions):
+      |     _fetch_growth_signal(region)    # yfinance 3M equity return proxy
+      |       US=^GSPC, India=^BSESN, Japan=^N225, Europe=^STOXX50E
+      |       NOTE: FRED NAPM (ISM PMI) is subscriber-only — not freely available
+      |
+      +-- Inflation:
+      |     US/Europe → _fetch_inflation_signal(region, series_id, key)    # FRED CPI index, limit=24
+      |                   US=CPIAUCSL, Europe=CP0000EZ19M086NEST
+      |     India     → _fetch_inflation_signal_yoy(region, series_id, key, fetch_limit=12)
+      |                   India=CPALTT01INM657N (OECD YoY % series)
+      |     Japan     → _fetch_inflation_signal_yoy(region, series_id, key, fetch_limit=36)
+      |                   Japan=CPALTT01JPM657N (OECD YoY %, ~2yr pub lag; fetch 36 to reach valid data)
       |
       +-- _determine_regime(rates, growth, inflation) -> (label, color)
       +-- _get_factor_recommendations(regime_label) -> (favored, avoided)
 ```
+
+**Data source notes (lessons learned):**
+- `IN10Y=X`, `JP10Y=X`, `DE10Y=X` yfinance tickers return empty — replaced with FRED OECD monthly series
+- FRED `NAPM` (ISM PMI) returns 400 for free-tier keys — equity proxy used for all regions instead
+- `INDCPIALLMINMEI` / `JPNCPIALLMINMEI` return 500 or too few obs — replaced with OECD CPALTT01 series
+- `CPALTT01JPM657N` (Japan) has ~2-year publication lag on FRED — limit=36 digs past "." entries
+- FRED intermittently returns 500 for burst requests; all fetchers degrade to "unknown" gracefully
 
 ## Tech Stack
 
