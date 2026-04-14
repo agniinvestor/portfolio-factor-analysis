@@ -214,43 +214,32 @@ class TestFetchRatesSignalFred:
 
 
 class TestFetchGrowthSignal:
-    def test_us_expanding_when_pmi_above_50_and_rising(self, monkeypatch):
-        # Descending order (FRED sort_order=desc): latest first
-        payload = {
-            "observations": [
-                {"date": "2026-03-01", "value": "54.2"},
-                {"date": "2026-02-01", "value": "53.0"},
-                {"date": "2026-01-01", "value": "52.1"},
-            ]
-        }
+    def test_us_expanding_when_sp500_up(self, monkeypatch):
+        """US uses ^GSPC equity proxy — 3M uptrend = expanding."""
+        idx = pd.date_range("2026-01-01", periods=90, freq="B")
+        series = pd.Series(range(90), index=idx, dtype="float64")
+        df = pd.DataFrame({"Close": series})
 
-        class FakeResp:
-            status_code = 200
-            def json(self): return payload
-            def raise_for_status(self): pass
+        class FakeTicker:
+            def __init__(self, t): pass
+            def history(self, period="6mo", interval="1d"):
+                return df
 
-        monkeypatch.setattr(mf.requests, "get", lambda *a, **k: FakeResp())
-        assert mf._fetch_growth_signal("US", "FAKE_KEY") == "expanding"
+        monkeypatch.setattr(mf, "yf", type("YF", (), {"Ticker": FakeTicker}))
+        assert mf._fetch_growth_signal("US") == "expanding"
 
-    def test_us_contracting_when_pmi_below_50(self, monkeypatch):
-        payload = {
-            "observations": [
-                {"date": "2026-03-01", "value": "48.0"},
-                {"date": "2026-02-01", "value": "49.0"},
-                {"date": "2026-01-01", "value": "49.5"},
-            ]
-        }
+    def test_us_contracting_when_sp500_down(self, monkeypatch):
+        idx = pd.date_range("2026-01-01", periods=90, freq="B")
+        series = pd.Series(range(90, 0, -1), index=idx, dtype="float64")
+        df = pd.DataFrame({"Close": series})
 
-        class FakeResp:
-            status_code = 200
-            def json(self): return payload
-            def raise_for_status(self): pass
+        class FakeTicker:
+            def __init__(self, t): pass
+            def history(self, period="6mo", interval="1d"):
+                return df
 
-        monkeypatch.setattr(mf.requests, "get", lambda *a, **k: FakeResp())
-        assert mf._fetch_growth_signal("US", "FAKE_KEY") == "contracting"
-
-    def test_us_no_api_key_returns_unknown(self):
-        assert mf._fetch_growth_signal("US", None) == "unknown"
+        monkeypatch.setattr(mf, "yf", type("YF", (), {"Ticker": FakeTicker}))
+        assert mf._fetch_growth_signal("US") == "contracting"
 
     def test_india_uses_equity_proxy_positive(self, monkeypatch):
         idx = pd.date_range("2026-01-01", periods=90, freq="B")
@@ -394,10 +383,11 @@ class TestFetchMacroSignals:
         cache_file = tmp_path / "macro_regime.json"
         monkeypatch.setattr(mf, "CACHE_PATH", cache_file)
 
-        monkeypatch.setattr(mf, "_fetch_rates_signal",      lambda r, t: "falling")
-        monkeypatch.setattr(mf, "_fetch_rates_signal_fred", lambda r, s, k: "falling")
-        monkeypatch.setattr(mf, "_fetch_growth_signal",     lambda r, k: "expanding")
-        monkeypatch.setattr(mf, "_fetch_inflation_signal",  lambda r, s, k: "falling")
+        monkeypatch.setattr(mf, "_fetch_rates_signal",          lambda r, t: "falling")
+        monkeypatch.setattr(mf, "_fetch_rates_signal_fred",     lambda r, s, k: "falling")
+        monkeypatch.setattr(mf, "_fetch_growth_signal",         lambda r: "expanding")
+        monkeypatch.setattr(mf, "_fetch_inflation_signal",      lambda r, s, k: "falling")
+        monkeypatch.setattr(mf, "_fetch_inflation_signal_yoy",  lambda r, s, k, fetch_limit=12: "falling")
 
         out = mf.fetch_macro_signals(force_refresh=True, fred_api_key="X")
         assert out["US"]["regime"] == "Goldilocks"
@@ -414,10 +404,11 @@ class TestFetchMacroSignals:
                                "color": "#f39c12"}},
         }))
         monkeypatch.setattr(mf, "CACHE_PATH", cache_file)
-        monkeypatch.setattr(mf, "_fetch_rates_signal",      lambda r, t: "falling")
-        monkeypatch.setattr(mf, "_fetch_rates_signal_fred", lambda r, s, k: "falling")
-        monkeypatch.setattr(mf, "_fetch_growth_signal",     lambda r, k: "expanding")
-        monkeypatch.setattr(mf, "_fetch_inflation_signal",  lambda r, s, k: "falling")
+        monkeypatch.setattr(mf, "_fetch_rates_signal",          lambda r, t: "falling")
+        monkeypatch.setattr(mf, "_fetch_rates_signal_fred",     lambda r, s, k: "falling")
+        monkeypatch.setattr(mf, "_fetch_growth_signal",         lambda r: "expanding")
+        monkeypatch.setattr(mf, "_fetch_inflation_signal",      lambda r, s, k: "falling")
+        monkeypatch.setattr(mf, "_fetch_inflation_signal_yoy",  lambda r, s, k, fetch_limit=12: "falling")
 
         out = mf.fetch_macro_signals(force_refresh=False, fred_api_key="X")
         assert out["US"]["regime"] == "Goldilocks"
@@ -425,10 +416,11 @@ class TestFetchMacroSignals:
     def test_output_shape(self, monkeypatch, tmp_path):
         cache_file = tmp_path / "macro_regime.json"
         monkeypatch.setattr(mf, "CACHE_PATH", cache_file)
-        monkeypatch.setattr(mf, "_fetch_rates_signal",      lambda r, t: "rising")
-        monkeypatch.setattr(mf, "_fetch_rates_signal_fred", lambda r, s, k: "rising")
-        monkeypatch.setattr(mf, "_fetch_growth_signal",     lambda r, k: "contracting")
-        monkeypatch.setattr(mf, "_fetch_inflation_signal",  lambda r, s, k: "rising")
+        monkeypatch.setattr(mf, "_fetch_rates_signal",          lambda r, t: "rising")
+        monkeypatch.setattr(mf, "_fetch_rates_signal_fred",     lambda r, s, k: "rising")
+        monkeypatch.setattr(mf, "_fetch_growth_signal",         lambda r: "contracting")
+        monkeypatch.setattr(mf, "_fetch_inflation_signal",      lambda r, s, k: "rising")
+        monkeypatch.setattr(mf, "_fetch_inflation_signal_yoy",  lambda r, s, k, fetch_limit=12: "rising")
 
         out = mf.fetch_macro_signals(force_refresh=True, fred_api_key="X")
         assert set(out.keys()) == {"US", "India", "Japan", "Europe"}

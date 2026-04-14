@@ -2,6 +2,17 @@
 
 All fetches fall back to "unknown" on failure (logged as warnings). Cached to
 data/cache/macro_regime.json for 24 hours.
+
+Data source notes:
+- US rates: yfinance ^TNX (daily, reliable)
+- India/Japan/Europe rates: FRED monthly 10Y series (OECD)
+- Growth (all regions): yfinance equity index 3M return proxy
+  (NAPM/ISM PMI is subscriber-only on FRED; free alternative not available)
+- US/Europe inflation: FRED CPI index series (CPIAUCSL / CP0000EZ19M086NEST),
+  YoY acceleration formula, needs >= 18 valid monthly obs
+- India inflation: FRED OECD YoY % series (CPALTT01INM657N), needs >= 6 obs
+- Japan inflation: FRED OECD YoY % series (CPALTT01JPM657N), limit=36 to
+  reach data past FRED's ~2-year lag; signal reflects most recent available
 """
 from __future__ import annotations
 
@@ -46,24 +57,41 @@ FACTOR_MATRIX: dict[str, dict[str, str]] = {
 
 FACTORS: list[str] = ["Mkt Beta", "Size", "Value", "Momentum", "Quality", "Low Vol", "Growth"]
 
+# US 10Y via yfinance; India/Japan/Europe via FRED monthly OECD series
 YIELD_TICKERS: dict[str, str] = {
     "US": "^TNX",
 }
-
-# FRED monthly 10Y government bond yield series (for regions where yfinance is unreliable)
 YIELD_FRED_SERIES: dict[str, str] = {
     "India":  "INDIRLTLT01STM",
     "Japan":  "IRLTLT01JPM156N",
     "Europe": "IRLTLT01DEM156N",
 }
+
+# All regions use 3M equity index return as growth proxy.
+# ISM PMI (NAPM) is subscriber-only on FRED; no free real-time PMI available.
 EQUITY_TICKERS: dict[str, str] = {
-    "India": "^BSESN", "Japan": "^N225", "Europe": "^STOXX50E",
+    "US":     "^GSPC",
+    "India":  "^BSESN",
+    "Japan":  "^N225",
+    "Europe": "^STOXX50E",
 }
-CPI_SERIES: dict[str, str] = {
+
+# CPI index series (US, Europe): needs >= 18 valid monthly obs for YoY formula
+CPI_SERIES_INDEX: dict[str, str] = {
     "US":     "CPIAUCSL",
-    "India":  "INDCPIALLMINMEI",
-    "Japan":  "JPNCPIALLMINMEI",
     "Europe": "CP0000EZ19M086NEST",
+}
+
+# CPI YoY % change series (OECD CPALTT01): fetch limit=36 so we reach valid obs
+# past FRED's publication lag. Needs >= 6 valid obs. Signal reflects most recent
+# available data even if lagged ~2 years (better than "unknown").
+CPI_SERIES_YOY: dict[str, str] = {
+    "India": "CPALTT01INM657N",
+    "Japan": "CPALTT01JPM657N",
+}
+CPI_YOY_FETCH_LIMIT: dict[str, int] = {
+    "India": 12,   # updated frequently; 12 obs enough
+    "Japan": 36,   # ~2-year lag on FRED; fetch more to find valid data
 }
 
 FRED_URL = "https://api.stlouisfed.org/fred/series/observations"
@@ -165,43 +193,11 @@ def _fetch_rates_signal_fred(region: str, series_id: str, fred_api_key: Optional
         return "unknown"
 
 
-def _fetch_growth_signal(region: str, fred_api_key: Optional[str]) -> str:
+def _fetch_growth_signal(region: str, _fred_api_key: Optional[str] = None) -> str:
     """
-    US: FRED ISM PMI (NAPM). Expanding if latest >= 50 AND latest >= prior; else contracting.
-    Others: yfinance equity index proxy, 3M return sign.
+    3-month equity index return as growth proxy for all regions.
+    Positive return -> expanding; negative -> contracting.
     """
-    if region == "US":
-        if not fred_api_key:
-            logger.warning("growth(US): no FRED api_key; returning unknown")
-            return "unknown"
-        try:
-            params = {
-                "series_id": "NAPM",
-                "api_key": fred_api_key,
-                "file_type": "json",
-                "sort_order": "desc",
-                "limit": 18,
-            }
-            resp = requests.get(FRED_URL, params=params, timeout=15)
-            resp.raise_for_status()
-            obs = resp.json().get("observations", [])
-            values: list[float] = []
-            for o in obs:
-                v = o.get("value")
-                if v not in (None, ".", ""):
-                    try:
-                        values.append(float(v))
-                    except ValueError:
-                        pass
-            if len(values) < 2:
-                logger.warning("growth(US): insufficient PMI observations")
-                return "unknown"
-            latest, prior = values[0], values[1]
-            return "expanding" if (latest >= 50.0 and latest >= prior) else "contracting"
-        except Exception as exc:
-            logger.warning("growth(US): FRED fetch failed: %s", exc)
-            return "unknown"
-
     ticker = EQUITY_TICKERS.get(region)
     if ticker is None:
         logger.warning("growth: unknown region %s", region)
@@ -223,8 +219,9 @@ def _fetch_growth_signal(region: str, fred_api_key: Optional[str]) -> str:
 
 def _fetch_inflation_signal(region: str, series_id: str, fred_api_key: Optional[str]) -> str:
     """
-    CPI YoY trend: compare (recent 3M avg CPI / CPI 12m earlier) vs (prior 3M avg CPI / CPI 12m earlier).
-    Needs >= 18 months of observations. Returns rising/falling/unknown.
+    CPI index YoY trend: compare recent 3M avg YoY vs prior 3M avg YoY.
+    Uses CPI price-index series. Needs >= 18 valid monthly observations.
+    Returns rising/falling/unknown.
     """
     if not fred_api_key:
         logger.warning("inflation(%s): no FRED api_key; returning unknown", region)
@@ -235,7 +232,7 @@ def _fetch_inflation_signal(region: str, series_id: str, fred_api_key: Optional[
             "api_key": fred_api_key,
             "file_type": "json",
             "sort_order": "desc",
-            "limit": 18,
+            "limit": 24,  # fetch extra to ensure 18 valid after filtering "."
         }
         resp = requests.get(FRED_URL, params=params, timeout=15)
         resp.raise_for_status()
@@ -252,9 +249,9 @@ def _fetch_inflation_signal(region: str, series_id: str, fred_api_key: Optional[
             logger.warning("inflation(%s): only %d observations", region, len(values))
             return "unknown"
 
-        # values[0] = latest month, values[17] = 17 months ago
-        recent_3m_avg = sum(values[0:3]) / 3.0    # months 0,1,2
-        prior_3m_avg  = sum(values[3:6]) / 3.0    # months 3,4,5
+        # values[0] = latest month (desc order)
+        recent_3m_avg   = sum(values[0:3]) / 3.0    # months 0,1,2
+        prior_3m_avg    = sum(values[3:6]) / 3.0    # months 3,4,5
         recent_yoy_base = sum(values[12:15]) / 3.0  # 12m earlier for recent window
         prior_yoy_base  = sum(values[15:18]) / 3.0  # 12m earlier for prior window
 
@@ -267,6 +264,49 @@ def _fetch_inflation_signal(region: str, series_id: str, fred_api_key: Optional[
         return "rising" if recent_yoy > prior_yoy else "falling"
     except Exception as exc:
         logger.warning("inflation(%s): FRED fetch failed: %s", region, exc)
+        return "unknown"
+
+
+def _fetch_inflation_signal_yoy(region: str, series_id: str, fred_api_key: Optional[str],
+                                 fetch_limit: int = 12) -> str:
+    """
+    CPI YoY % change series (e.g. OECD CPALTT01 series).
+    Compares recent 3M avg to prior 3M avg. Needs >= 6 valid observations.
+    fetch_limit can be increased (e.g. 36) for series with long publication lags.
+    Returns rising/falling/unknown.
+    """
+    if not fred_api_key:
+        logger.warning("inflation_yoy(%s): no FRED api_key; returning unknown", region)
+        return "unknown"
+    try:
+        params = {
+            "series_id": series_id,
+            "api_key": fred_api_key,
+            "file_type": "json",
+            "sort_order": "desc",
+            "limit": fetch_limit,
+        }
+        resp = requests.get(FRED_URL, params=params, timeout=15)
+        resp.raise_for_status()
+        obs = resp.json().get("observations", [])
+        values: list[float] = []
+        for o in obs:
+            v = o.get("value")
+            if v not in (None, ".", ""):
+                try:
+                    values.append(float(v))
+                except ValueError:
+                    pass
+        if len(values) < 6:
+            logger.warning("inflation_yoy(%s): only %d valid obs (limit=%d)", region, len(values), fetch_limit)
+            return "unknown"
+
+        # values are already YoY % change; compare 3M averages
+        recent_avg = sum(values[0:3]) / 3.0
+        prior_avg  = sum(values[3:6]) / 3.0
+        return "rising" if recent_avg > prior_avg else "falling"
+    except Exception as exc:
+        logger.warning("inflation_yoy(%s): FRED fetch failed: %s", region, exc)
         return "unknown"
 
 
@@ -316,13 +356,23 @@ def fetch_macro_signals(
     regions = ["US", "India", "Japan", "Europe"]
     signals: dict[str, dict[str, str]] = {}
     for region in regions:
-        cpi_series = CPI_SERIES[region]
+        # Rates
         if region in YIELD_TICKERS:
             rates = _fetch_rates_signal(region, YIELD_TICKERS[region])
         else:
             rates = _fetch_rates_signal_fred(region, YIELD_FRED_SERIES[region], fred_api_key)
-        growth    = _fetch_growth_signal(region, fred_api_key)
-        inflation = _fetch_inflation_signal(region, cpi_series, fred_api_key)
+
+        # Growth — equity index 3M return proxy for all regions
+        growth = _fetch_growth_signal(region)
+
+        # Inflation
+        if region in CPI_SERIES_INDEX:
+            inflation = _fetch_inflation_signal(region, CPI_SERIES_INDEX[region], fred_api_key)
+        else:
+            limit = CPI_YOY_FETCH_LIMIT.get(region, 12)
+            inflation = _fetch_inflation_signal_yoy(region, CPI_SERIES_YOY[region], fred_api_key,
+                                                     fetch_limit=limit)
+
         regime_label, color = _determine_regime(rates, growth, inflation)
         signals[region] = {
             "rates": rates, "growth": growth, "inflation": inflation,
