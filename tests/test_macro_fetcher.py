@@ -17,6 +17,18 @@ class TestRegimeMap:
         label, _ = mf.REGIME_MAP[("rising", "contracting", "rising")]
         assert label == "Stagflation"
 
+    @pytest.mark.parametrize("key,expected_label", [
+        (("rising",  "expanding",   "rising"),   "Overheating"),
+        (("falling", "contracting", "falling"),  "Deflation / Bust"),
+        (("rising",  "expanding",   "falling"),  "Recovery / Tightening"),
+        (("falling", "contracting", "rising"),   "Stagflation-Lite"),
+        (("rising",  "contracting", "falling"),  "Recession / Tightening"),
+        (("falling", "expanding",   "rising"),   "Reflation"),
+    ])
+    def test_all_regime_labels(self, key, expected_label):
+        label, _ = mf.REGIME_MAP[key]
+        assert label == expected_label
+
 
 class TestFactorMatrix:
     def test_all_regimes_covered(self):
@@ -73,6 +85,12 @@ class TestFactorRecommendations:
         assert "Low Vol" in favored
         assert "Mkt Beta" in avoided
 
+    def test_goldilocks_neutral_not_in_favored_or_avoided(self):
+        favored, avoided = mf._get_factor_recommendations("Goldilocks")
+        # Value is ○ (Neutral) in Goldilocks — must not appear in either list
+        assert "Value" not in favored
+        assert "Value" not in avoided
+
 
 class TestSignalArrow:
     def test_rising(self):
@@ -89,3 +107,6 @@ class TestSignalArrow:
 
     def test_unknown(self):
         assert mf._signal_arrow("unknown") == "?"
+
+    def test_arbitrary_string_returns_question_mark(self):
+        assert mf._signal_arrow("anything_else") == "?"
