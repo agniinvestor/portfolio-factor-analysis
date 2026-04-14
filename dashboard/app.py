@@ -44,7 +44,11 @@ portfolio = load_portfolio(str(PORTFOLIO_PATH))
 # ── Fetch data ────────────────────────────────────────────────────────────────
 @st.cache_data(show_spinner="Fetching IIMA factors…")
 def get_iima(force):
-    return fetch_iima_factors(force_refresh=force)
+    try:
+        return fetch_iima_factors(force_refresh=force)
+    except Exception as e:
+        st.warning(f"Could not reach IIMA data source: {e}. Factor regression tabs will be unavailable.")
+        return pd.DataFrame()
 
 @st.cache_data(show_spinner="Fetching stock fundamentals from Screener.in…")
 def get_fundamentals(tickers_tuple, force):
