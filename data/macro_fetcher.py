@@ -174,3 +174,52 @@ def _fetch_growth_signal(region: str, fred_api_key: Optional[str]) -> str:
     except Exception as exc:
         logger.warning("growth(%s): fetch failed: %s", region, exc)
         return "unknown"
+
+
+def _fetch_inflation_signal(region: str, series_id: str, fred_api_key: Optional[str]) -> str:
+    """
+    CPI YoY trend: compare (recent 3M avg CPI / CPI 12m earlier) vs (prior 3M avg CPI / CPI 12m earlier).
+    Needs >= 18 months of observations. Returns rising/falling/unknown.
+    """
+    if not fred_api_key:
+        logger.warning("inflation(%s): no FRED api_key; returning unknown", region)
+        return "unknown"
+    try:
+        params = {
+            "series_id": series_id,
+            "api_key": fred_api_key,
+            "file_type": "json",
+            "sort_order": "desc",
+            "limit": 18,
+        }
+        resp = requests.get(FRED_URL, params=params, timeout=15)
+        resp.raise_for_status()
+        obs = resp.json().get("observations", [])
+        values: list[float] = []
+        for o in obs:
+            v = o.get("value")
+            if v not in (None, ".", ""):
+                try:
+                    values.append(float(v))
+                except ValueError:
+                    pass
+        if len(values) < 18:
+            logger.warning("inflation(%s): only %d observations", region, len(values))
+            return "unknown"
+
+        # values[0] = latest month, values[17] = 17 months ago
+        recent_3m_avg = sum(values[0:3]) / 3.0    # months 0,1,2
+        prior_3m_avg  = sum(values[3:6]) / 3.0    # months 3,4,5
+        recent_yoy_base = sum(values[12:15]) / 3.0  # 12m earlier for recent window
+        prior_yoy_base  = sum(values[15:18]) / 3.0  # 12m earlier for prior window
+
+        if recent_yoy_base <= 0 or prior_yoy_base <= 0:
+            return "unknown"
+
+        recent_yoy = (recent_3m_avg / recent_yoy_base) - 1.0
+        prior_yoy  = (prior_3m_avg  / prior_yoy_base)  - 1.0
+
+        return "rising" if recent_yoy > prior_yoy else "falling"
+    except Exception as exc:
+        logger.warning("inflation(%s): FRED fetch failed: %s", region, exc)
+        return "unknown"

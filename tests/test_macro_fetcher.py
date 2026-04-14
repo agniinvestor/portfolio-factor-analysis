@@ -242,3 +242,77 @@ class TestFetchGrowthSignal:
 
         monkeypatch.setattr(mf, "yf", type("YF", (), {"Ticker": FakeTicker}))
         assert mf._fetch_growth_signal("Europe", None) == "unknown"
+
+
+class TestFetchInflationSignal:
+    def _cpi_payload(self, values_desc):
+        """Build a FRED-style response with 18 monthly CPI levels, latest first."""
+        obs = [
+            {"date": f"2026-{12 - i:02d}-01", "value": str(v)}
+            for i, v in enumerate(values_desc)
+        ]
+        return {"observations": obs}
+
+    def test_rising_when_recent_3m_yoy_gt_prior_3m_yoy(self, monkeypatch):
+        # 18 months, latest first. recent YoY = avg(0:3)/avg(12:15) - 1 must exceed
+        # prior YoY = avg(3:6)/avg(15:18) - 1. Use accelerating CPI in the recent window.
+        values = [
+            140, 138, 136,       # recent 3m (avg 138)
+            128, 127, 126,       # 3-6 months ago (avg 127)
+            125, 124, 123,       # 6-9
+            122, 121, 120,       # 9-12
+            119, 118, 117,       # 12-15 (avg 118) — recent YoY ≈ 138/118 - 1 ≈ 0.169
+            116, 115, 114,       # 15-18 (avg 115) — prior YoY ≈ 127/115 - 1 ≈ 0.104
+        ]
+        payload = self._cpi_payload(values)
+
+        class FakeResp:
+            status_code = 200
+            def json(self): return payload
+            def raise_for_status(self): pass
+
+        monkeypatch.setattr(mf.requests, "get", lambda *a, **k: FakeResp())
+        assert mf._fetch_inflation_signal("US", "CPIAUCSL", "FAKE_KEY") == "rising"
+
+    def test_falling_when_recent_3m_yoy_lt_prior_3m_yoy(self, monkeypatch):
+        # Decelerating CPI
+        values = [
+            120.1, 120.0, 119.9,  # recent 3m
+            119.8, 119.7, 119.6,
+            119.5, 119.4, 119.3,
+            119.2, 119.1, 119.0,
+            117.0, 116.0, 115.0,  # 12-15 months ago
+            113.0, 112.0, 111.0,  # 15-18 months ago (big jump earlier -> prior YoY higher)
+        ]
+        payload = self._cpi_payload(values)
+
+        class FakeResp:
+            status_code = 200
+            def json(self): return payload
+            def raise_for_status(self): pass
+
+        monkeypatch.setattr(mf.requests, "get", lambda *a, **k: FakeResp())
+        assert mf._fetch_inflation_signal("US", "CPIAUCSL", "FAKE_KEY") == "falling"
+
+    def test_no_api_key_returns_unknown(self):
+        assert mf._fetch_inflation_signal("US", "CPIAUCSL", None) == "unknown"
+
+    def test_http_error_returns_unknown(self, monkeypatch):
+        class FakeResp:
+            status_code = 500
+            def json(self): return {}
+            def raise_for_status(self): raise RuntimeError("500")
+
+        monkeypatch.setattr(mf.requests, "get", lambda *a, **k: FakeResp())
+        assert mf._fetch_inflation_signal("US", "CPIAUCSL", "FAKE_KEY") == "unknown"
+
+    def test_insufficient_observations_returns_unknown(self, monkeypatch):
+        payload = {"observations": [{"date": "2026-03-01", "value": "130"}]}
+
+        class FakeResp:
+            status_code = 200
+            def json(self): return payload
+            def raise_for_status(self): pass
+
+        monkeypatch.setattr(mf.requests, "get", lambda *a, **k: FakeResp())
+        assert mf._fetch_inflation_signal("US", "CPIAUCSL", "FAKE_KEY") == "unknown"
