@@ -1,4 +1,7 @@
 """Tests for data.macro_fetcher pure helpers and lookup tables."""
+import json
+from datetime import datetime, timedelta
+
 import pytest
 import pandas as pd
 
@@ -316,3 +319,75 @@ class TestFetchInflationSignal:
 
         monkeypatch.setattr(mf.requests, "get", lambda *a, **k: FakeResp())
         assert mf._fetch_inflation_signal("US", "CPIAUCSL", "FAKE_KEY") == "unknown"
+
+
+class TestFetchMacroSignals:
+    def test_uses_cache_when_fresh(self, monkeypatch, tmp_path):
+        cache_file = tmp_path / "macro_regime.json"
+        payload = {
+            "fetched_at": datetime.utcnow().isoformat(),
+            "signals": {
+                "US":     {"rates": "rising", "growth": "expanding", "inflation": "rising",
+                           "regime": "Overheating", "color": "#f39c12"},
+                "India":  {"rates": "falling","growth": "expanding", "inflation": "falling",
+                           "regime": "Goldilocks", "color": "#27ae60"},
+                "Japan":  {"rates": "rising", "growth": "contracting","inflation": "rising",
+                           "regime": "Stagflation", "color": "#e74c3c"},
+                "Europe": {"rates": "falling","growth": "contracting","inflation": "falling",
+                           "regime": "Deflation / Bust", "color": "#2c3e50"},
+            },
+        }
+        cache_file.write_text(json.dumps(payload))
+        monkeypatch.setattr(mf, "CACHE_PATH", cache_file)
+
+        def _boom(*a, **k): raise AssertionError("should not fetch")
+        monkeypatch.setattr(mf, "_fetch_rates_signal", _boom)
+        monkeypatch.setattr(mf, "_fetch_growth_signal", _boom)
+        monkeypatch.setattr(mf, "_fetch_inflation_signal", _boom)
+
+        out = mf.fetch_macro_signals(force_refresh=False, fred_api_key="X")
+        assert out["US"]["regime"] == "Overheating"
+        assert out["India"]["color"] == "#27ae60"
+
+    def test_force_refresh_ignores_cache(self, monkeypatch, tmp_path):
+        cache_file = tmp_path / "macro_regime.json"
+        monkeypatch.setattr(mf, "CACHE_PATH", cache_file)
+
+        monkeypatch.setattr(mf, "_fetch_rates_signal",     lambda r, t: "falling")
+        monkeypatch.setattr(mf, "_fetch_growth_signal",    lambda r, k: "expanding")
+        monkeypatch.setattr(mf, "_fetch_inflation_signal", lambda r, s, k: "falling")
+
+        out = mf.fetch_macro_signals(force_refresh=True, fred_api_key="X")
+        assert out["US"]["regime"] == "Goldilocks"
+        assert out["India"]["regime"] == "Goldilocks"
+        assert cache_file.exists()
+
+    def test_stale_cache_triggers_refresh(self, monkeypatch, tmp_path):
+        cache_file = tmp_path / "macro_regime.json"
+        stale = datetime.utcnow() - timedelta(hours=48)
+        cache_file.write_text(json.dumps({
+            "fetched_at": stale.isoformat(),
+            "signals": {"US": {"rates": "rising", "growth": "expanding",
+                               "inflation": "rising", "regime": "Overheating",
+                               "color": "#f39c12"}},
+        }))
+        monkeypatch.setattr(mf, "CACHE_PATH", cache_file)
+        monkeypatch.setattr(mf, "_fetch_rates_signal",     lambda r, t: "falling")
+        monkeypatch.setattr(mf, "_fetch_growth_signal",    lambda r, k: "expanding")
+        monkeypatch.setattr(mf, "_fetch_inflation_signal", lambda r, s, k: "falling")
+
+        out = mf.fetch_macro_signals(force_refresh=False, fred_api_key="X")
+        assert out["US"]["regime"] == "Goldilocks"
+
+    def test_output_shape(self, monkeypatch, tmp_path):
+        cache_file = tmp_path / "macro_regime.json"
+        monkeypatch.setattr(mf, "CACHE_PATH", cache_file)
+        monkeypatch.setattr(mf, "_fetch_rates_signal",     lambda r, t: "rising")
+        monkeypatch.setattr(mf, "_fetch_growth_signal",    lambda r, k: "contracting")
+        monkeypatch.setattr(mf, "_fetch_inflation_signal", lambda r, s, k: "rising")
+
+        out = mf.fetch_macro_signals(force_refresh=True, fred_api_key="X")
+        assert set(out.keys()) == {"US", "India", "Japan", "Europe"}
+        for region, d in out.items():
+            assert set(d.keys()) == {"rates", "growth", "inflation", "regime", "color"}
+        assert out["US"]["regime"] == "Stagflation"

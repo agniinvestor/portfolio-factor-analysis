@@ -223,3 +223,64 @@ def _fetch_inflation_signal(region: str, series_id: str, fred_api_key: Optional[
     except Exception as exc:
         logger.warning("inflation(%s): FRED fetch failed: %s", region, exc)
         return "unknown"
+
+
+# --------------------------------------------------------------------------
+# Caching
+# --------------------------------------------------------------------------
+
+def _load_cache() -> Optional[dict]:
+    if not CACHE_PATH.exists():
+        return None
+    try:
+        raw = json.loads(CACHE_PATH.read_text())
+        fetched_at = datetime.fromisoformat(raw["fetched_at"])
+        if datetime.utcnow() - fetched_at > CACHE_TTL:
+            return None
+        return raw.get("signals")
+    except Exception as exc:
+        logger.warning("macro cache read failed: %s", exc)
+        return None
+
+
+def _save_cache(signals: dict) -> None:
+    try:
+        CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        CACHE_PATH.write_text(json.dumps({
+            "fetched_at": datetime.utcnow().isoformat(),
+            "signals": signals,
+        }, indent=2))
+    except Exception as exc:
+        logger.warning("macro cache write failed: %s", exc)
+
+
+# --------------------------------------------------------------------------
+# Top-level entry point
+# --------------------------------------------------------------------------
+
+def fetch_macro_signals(
+    force_refresh: bool = False,
+    fred_api_key: Optional[str] = None,
+) -> dict[str, dict[str, str]]:
+    """Return per-region macro signal dict. Cached in data/cache/macro_regime.json (24h)."""
+    if not force_refresh:
+        cached = _load_cache()
+        if cached is not None:
+            return cached
+
+    regions = ["US", "India", "Japan", "Europe"]
+    signals: dict[str, dict[str, str]] = {}
+    for region in regions:
+        yield_ticker = YIELD_TICKERS[region]
+        cpi_series = CPI_SERIES[region]
+        rates     = _fetch_rates_signal(region, yield_ticker)
+        growth    = _fetch_growth_signal(region, fred_api_key)
+        inflation = _fetch_inflation_signal(region, cpi_series, fred_api_key)
+        regime_label, color = _determine_regime(rates, growth, inflation)
+        signals[region] = {
+            "rates": rates, "growth": growth, "inflation": inflation,
+            "regime": regime_label, "color": color,
+        }
+
+    _save_cache(signals)
+    return signals
