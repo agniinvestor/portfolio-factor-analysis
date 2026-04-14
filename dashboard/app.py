@@ -12,6 +12,8 @@ from data.fetcher import fetch_iima_factors, fetch_all_fundamentals, fetch_ticke
 from data.cache_manager import is_stale, CACHE_DIR
 from factors.scorer import compute_style_scores, compute_portfolio_scores, compute_nifty500_percentile_scores
 from factors.regression import build_portfolio_returns, run_carhart_regression, rolling_carhart_betas, factor_return_attribution
+from dashboard import tab_macro_regime
+from data.macro_fetcher import fetch_macro_signals
 
 PORTFOLIO_PATH = Path(__file__).parent.parent / "portfolio.xlsx"
 
@@ -55,12 +57,13 @@ iima_factors = get_iima(force_refresh)
 fundamentals = get_fundamentals(tuple(portfolio["ticker"].tolist()), force_refresh)
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "Portfolio Overview",
     "Factor Regression",
     "Style Scorecard",
     "Stock Deep-Dive",
     "Portfolio Profile",
+    "Macro Regime",
 ])
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -718,3 +721,19 @@ with tab5:
         xaxis=dict(tickangle=-45),
     )
     st.plotly_chart(fig_weights, use_container_width=True)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB 6 — Macro Regime
+# ═══════════════════════════════════════════════════════════════════════════════
+with tab6:
+    macro_refresh = st.button("Refresh macro signals", key="macro_refresh")
+    fred_api_key = st.secrets.get("fred", {}).get("api_key") if hasattr(st, "secrets") else None
+    try:
+        signals = fetch_macro_signals(
+            force_refresh=macro_refresh,
+            fred_api_key=fred_api_key,
+        )
+    except Exception as exc:
+        st.error(f"Failed to fetch macro signals: {exc}")
+        signals = {}
+    tab_macro_regime.render(signals, force_refresh=macro_refresh)
