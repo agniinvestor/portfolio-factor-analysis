@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
+import requests
 import yfinance as yf
 
 logger = logging.getLogger(__name__)
@@ -116,4 +117,60 @@ def _fetch_rates_signal(region: str, ticker: str) -> str:
         return "rising" if diff > 0 else "falling"
     except Exception as exc:
         logger.warning("rates: fetch failed for %s (%s): %s", region, ticker, exc)
+        return "unknown"
+
+
+def _fetch_growth_signal(region: str, fred_api_key: Optional[str]) -> str:
+    """
+    US: FRED ISM PMI (NAPM). Expanding if latest >= 50 AND latest >= prior; else contracting.
+    Others: yfinance equity index proxy, 3M return sign.
+    """
+    if region == "US":
+        if not fred_api_key:
+            logger.warning("growth(US): no FRED api_key; returning unknown")
+            return "unknown"
+        try:
+            params = {
+                "series_id": "NAPM",
+                "api_key": fred_api_key,
+                "file_type": "json",
+                "sort_order": "desc",
+                "limit": 18,
+            }
+            resp = requests.get(FRED_URL, params=params, timeout=15)
+            resp.raise_for_status()
+            obs = resp.json().get("observations", [])
+            values: list[float] = []
+            for o in obs:
+                v = o.get("value")
+                if v not in (None, ".", ""):
+                    try:
+                        values.append(float(v))
+                    except ValueError:
+                        pass
+            if len(values) < 2:
+                logger.warning("growth(US): insufficient PMI observations")
+                return "unknown"
+            latest, prior = values[0], values[1]
+            return "expanding" if (latest >= 50.0 and latest >= prior) else "contracting"
+        except Exception as exc:
+            logger.warning("growth(US): FRED fetch failed: %s", exc)
+            return "unknown"
+
+    ticker = EQUITY_TICKERS.get(region)
+    if ticker is None:
+        logger.warning("growth: unknown region %s", region)
+        return "unknown"
+    try:
+        hist = yf.Ticker(ticker).history(period="6mo", interval="1d")
+        if hist is None or hist.empty or "Close" not in hist.columns:
+            return "unknown"
+        closes = hist["Close"].dropna()
+        if len(closes) < MIN_RATES_LOOKBACK:
+            return "unknown"
+        latest = float(closes.iloc[-1])
+        prior = float(closes.iloc[-MIN_RATES_LOOKBACK])
+        return "expanding" if latest > prior else "contracting"
+    except Exception as exc:
+        logger.warning("growth(%s): fetch failed: %s", region, exc)
         return "unknown"

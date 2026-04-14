@@ -167,3 +167,78 @@ class TestFetchRatesSignal:
             def history(self, **_): return df
         monkeypatch.setattr(mf, "yf", type("YF", (), {"Ticker": FakeTicker}))
         assert mf._fetch_rates_signal("US", "^TNX") == "unknown"
+
+
+class TestFetchGrowthSignal:
+    def test_us_expanding_when_pmi_above_50_and_rising(self, monkeypatch):
+        # Descending order (FRED sort_order=desc): latest first
+        payload = {
+            "observations": [
+                {"date": "2026-03-01", "value": "54.2"},
+                {"date": "2026-02-01", "value": "53.0"},
+                {"date": "2026-01-01", "value": "52.1"},
+            ]
+        }
+
+        class FakeResp:
+            status_code = 200
+            def json(self): return payload
+            def raise_for_status(self): pass
+
+        monkeypatch.setattr(mf.requests, "get", lambda *a, **k: FakeResp())
+        assert mf._fetch_growth_signal("US", "FAKE_KEY") == "expanding"
+
+    def test_us_contracting_when_pmi_below_50(self, monkeypatch):
+        payload = {
+            "observations": [
+                {"date": "2026-03-01", "value": "48.0"},
+                {"date": "2026-02-01", "value": "49.0"},
+                {"date": "2026-01-01", "value": "49.5"},
+            ]
+        }
+
+        class FakeResp:
+            status_code = 200
+            def json(self): return payload
+            def raise_for_status(self): pass
+
+        monkeypatch.setattr(mf.requests, "get", lambda *a, **k: FakeResp())
+        assert mf._fetch_growth_signal("US", "FAKE_KEY") == "contracting"
+
+    def test_us_no_api_key_returns_unknown(self):
+        assert mf._fetch_growth_signal("US", None) == "unknown"
+
+    def test_india_uses_equity_proxy_positive(self, monkeypatch):
+        idx = pd.date_range("2026-01-01", periods=90, freq="B")
+        series = pd.Series(range(100, 190), index=idx, dtype="float64")
+        df = pd.DataFrame({"Close": series})
+
+        class FakeTicker:
+            def __init__(self, t): pass
+            def history(self, period="6mo", interval="1d"):
+                return df
+
+        monkeypatch.setattr(mf, "yf", type("YF", (), {"Ticker": FakeTicker}))
+        assert mf._fetch_growth_signal("India", None) == "expanding"
+
+    def test_japan_equity_proxy_negative(self, monkeypatch):
+        idx = pd.date_range("2026-01-01", periods=90, freq="B")
+        series = pd.Series(range(200, 110, -1), index=idx, dtype="float64")
+        df = pd.DataFrame({"Close": series})
+
+        class FakeTicker:
+            def __init__(self, t): pass
+            def history(self, period="6mo", interval="1d"):
+                return df
+
+        monkeypatch.setattr(mf, "yf", type("YF", (), {"Ticker": FakeTicker}))
+        assert mf._fetch_growth_signal("Japan", None) == "contracting"
+
+    def test_europe_exception_returns_unknown(self, monkeypatch):
+        class FakeTicker:
+            def __init__(self, t): pass
+            def history(self, period="6mo", interval="1d"):
+                raise RuntimeError("boom")
+
+        monkeypatch.setattr(mf, "yf", type("YF", (), {"Ticker": FakeTicker}))
+        assert mf._fetch_growth_signal("Europe", None) == "unknown"
