@@ -1,5 +1,6 @@
 """Tests for data.macro_fetcher pure helpers and lookup tables."""
 import pytest
+import pandas as pd
 
 from data import macro_fetcher as mf
 
@@ -112,13 +113,10 @@ class TestSignalArrow:
         assert mf._signal_arrow("anything_else") == "?"
 
 
-import pandas as pd
-
-
 class TestFetchRatesSignal:
     def test_rising_when_yield_up(self, monkeypatch):
         """Yield today > yield 3 months ago -> rising."""
-        idx = pd.date_range("2026-01-01", periods=90, freq="D")
+        idx = pd.date_range("2026-01-01", periods=90, freq="B")
         series = pd.Series(range(90), index=idx, dtype="float64")  # strictly increasing
         df = pd.DataFrame({"Close": series})
 
@@ -131,7 +129,7 @@ class TestFetchRatesSignal:
         assert mf._fetch_rates_signal("US", "^TNX") == "rising"
 
     def test_falling_when_yield_down(self, monkeypatch):
-        idx = pd.date_range("2026-01-01", periods=90, freq="D")
+        idx = pd.date_range("2026-01-01", periods=90, freq="B")
         series = pd.Series(range(90, 0, -1), index=idx, dtype="float64")
         df = pd.DataFrame({"Close": series})
 
@@ -158,5 +156,14 @@ class TestFetchRatesSignal:
             def history(self, period="6mo", interval="1d"):
                 raise RuntimeError("network down")
 
+        monkeypatch.setattr(mf, "yf", type("YF", (), {"Ticker": FakeTicker}))
+        assert mf._fetch_rates_signal("US", "^TNX") == "unknown"
+
+    def test_too_few_points_returns_unknown(self, monkeypatch):
+        idx = pd.date_range("2026-01-01", periods=15, freq="B")
+        df = pd.DataFrame({"Close": pd.Series(range(15), index=idx, dtype="float64")})
+        class FakeTicker:
+            def __init__(self, ticker): pass
+            def history(self, **_): return df
         monkeypatch.setattr(mf, "yf", type("YF", (), {"Ticker": FakeTicker}))
         assert mf._fetch_rates_signal("US", "^TNX") == "unknown"

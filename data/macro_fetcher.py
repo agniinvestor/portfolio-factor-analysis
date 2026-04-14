@@ -62,6 +62,9 @@ FRED_URL = "https://api.stlouisfed.org/fred/series/observations"
 CACHE_PATH = Path(__file__).parent / "cache" / "macro_regime.json"
 CACHE_TTL = timedelta(hours=24)
 
+MIN_RATES_LOOKBACK = 64  # ~63 trading-day separation (≈3 months)
+RATES_BPS_THRESHOLD = 0.05  # 5 basis points — treat flat as "unknown"
+
 # --------------------------------------------------------------------------
 # Pure helpers
 # --------------------------------------------------------------------------
@@ -102,13 +105,15 @@ def _fetch_rates_signal(region: str, ticker: str) -> str:
             logger.warning("rates: empty history for %s (%s)", region, ticker)
             return "unknown"
         closes = hist["Close"].dropna()
-        if len(closes) < 20:
-            logger.warning("rates: too few points for %s (%s)", region, ticker)
+        if len(closes) < MIN_RATES_LOOKBACK:
+            logger.warning("rates: too few points (%d) for %s (%s)", len(closes), region, ticker)
             return "unknown"
         latest = float(closes.iloc[-1])
-        lookback_idx = max(0, len(closes) - 64)
-        prior = float(closes.iloc[lookback_idx])
-        return "rising" if latest > prior else "falling"
+        prior = float(closes.iloc[-MIN_RATES_LOOKBACK])
+        diff = latest - prior
+        if abs(diff) < RATES_BPS_THRESHOLD:
+            return "unknown"
+        return "rising" if diff > 0 else "falling"
     except Exception as exc:
         logger.warning("rates: fetch failed for %s (%s): %s", region, ticker, exc)
         return "unknown"
