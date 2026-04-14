@@ -1,4 +1,4 @@
-"""Tab 6 — Macro Regime. Renders three sections (A cards, B table, C heatmap)."""
+"""Tab 6 — Macro Regime. Renders four sections (A cards, B table, C heatmap, D glossary)."""
 from __future__ import annotations
 
 import streamlit as st
@@ -137,6 +137,127 @@ def _render_section_c(signals: dict[str, dict[str, str]]) -> None:
     )
 
 
+_REGIME_GLOSSARY: list[dict[str, str]] = [
+    {
+        "Regime": "Goldilocks",
+        "Signals": "Rates ↓ · Growth ↑ · Inflation ↓",
+        "Color": "#27ae60",
+        "Description": (
+            "The ideal macro backdrop — growth is expanding while both rates and inflation "
+            "are falling. Risk assets thrive. Equities broadly rally with a tilt toward "
+            "cyclicals, small caps, and high-beta names. Central banks are accommodative or easing."
+        ),
+    },
+    {
+        "Regime": "Overheating",
+        "Signals": "Rates ↑ · Growth ↑ · Inflation ↑",
+        "Color": "#f39c12",
+        "Description": (
+            "The economy is running hot — strong growth but rising prices force central banks "
+            "to hike rates. Value and commodity-linked sectors outperform. Momentum works while "
+            "the trend holds. Long-duration assets (Growth, Low Vol) face headwinds from "
+            "higher discount rates."
+        ),
+    },
+    {
+        "Regime": "Stagflation",
+        "Signals": "Rates ↑ · Growth ↓ · Inflation ↑",
+        "Color": "#e74c3c",
+        "Description": (
+            "The worst macro environment — growth is contracting while inflation and rates are "
+            "both rising. Equities are broadly pressured. Defensive Quality and Low Vol factors "
+            "hold up best. Value (especially financials and commodities) can still work. "
+            "Historically rare but painful for portfolios."
+        ),
+    },
+    {
+        "Regime": "Deflation / Bust",
+        "Signals": "Rates ↓ · Growth ↓ · Inflation ↓",
+        "Color": "#2c3e50",
+        "Description": (
+            "A deflationary contraction — growth collapses and prices fall alongside rates. "
+            "Think 2008-09 or early Covid. Capital preservation dominates. Quality and Low Vol "
+            "factors significantly outperform. Most other factors, especially Value and Beta, "
+            "suffer heavily."
+        ),
+    },
+    {
+        "Regime": "Recovery / Tightening",
+        "Signals": "Rates ↑ · Growth ↑ · Inflation ↓",
+        "Color": "#16a085",
+        "Description": (
+            "Growth is recovering and expanding, but central banks are already tightening "
+            "even as inflation stays contained. A broad cyclical recovery — Value, Size, and "
+            "Market Beta all tend to do well. The window before inflation heats up and the "
+            "regime shifts to Overheating."
+        ),
+    },
+    {
+        "Regime": "Stagflation-Lite",
+        "Signals": "Rates ↓ · Growth ↓ · Inflation ↑",
+        "Color": "#c0392b",
+        "Description": (
+            "Growth is weakening and inflation is rising, but rates are not yet responding — "
+            "central banks may be behind the curve. A softer version of Stagflation. Quality "
+            "and defensive Value outperform while cyclicals and high-beta names struggle. "
+            "Often a transitional regime that resolves into full Stagflation or Reflation."
+        ),
+    },
+    {
+        "Regime": "Recession / Tightening",
+        "Signals": "Rates ↑ · Growth ↓ · Inflation ↓",
+        "Color": "#2980b9",
+        "Description": (
+            "Growth is contracting while central banks are still tightening (or haven't yet "
+            "pivoted to easing). A classic late-cycle environment. Quality and Low Vol "
+            "defensives outperform. Market Beta, Momentum, and Growth factors tend to suffer. "
+            "Often precedes Deflation/Bust or a policy pivot into Goldilocks."
+        ),
+    },
+    {
+        "Regime": "Reflation",
+        "Signals": "Rates ↓ · Growth ↑ · Inflation ↑",
+        "Color": "#d35400",
+        "Description": (
+            "Growth is expanding and inflation is picking up, with rates still falling or "
+            "accommodative — central banks are deliberately stimulating. Early-cycle recovery "
+            "dynamic. Cyclicals, commodities, and Value shine. Momentum and Growth also work "
+            "well. The regime that follows a Bust or policy pivot."
+        ),
+    },
+]
+
+
+def _render_section_d(signals: dict[str, dict[str, str]]) -> None:
+    st.subheader("Regime Glossary")
+    active_regimes = {sig.get("regime") for sig in signals.values()}
+
+    for entry in _REGIME_GLOSSARY:
+        name = entry["Regime"]
+        color = entry["Color"]
+        is_active = name in active_regimes
+        active_badge = (
+            f'<span style="background:{color}; color:white; font-size:11px; '
+            f'padding:2px 8px; border-radius:10px; margin-left:8px;">ACTIVE</span>'
+            if is_active else ""
+        )
+        html = f"""
+        <div style="border-left: 5px solid {color}; padding: 10px 16px;
+                    background: #f8f9fa; border-radius: 6px; margin-bottom: 10px;">
+          <div style="font-size:16px; font-weight:700; color:{color};">
+            {name}{active_badge}
+          </div>
+          <div style="font-size:12px; color:#666; margin: 2px 0 6px 0;">
+            {entry["Signals"]}
+          </div>
+          <div style="font-size:13px; line-height:1.5;">
+            {entry["Description"]}
+          </div>
+        </div>
+        """
+        st.markdown(html, unsafe_allow_html=True)
+
+
 def render(signals: dict[str, dict[str, str]], force_refresh: bool = False) -> None:
     """Entry point called by app.py."""
     st.header("Macro Regime Monitor")
@@ -147,3 +268,5 @@ def render(signals: dict[str, dict[str, str]], force_refresh: bool = False) -> N
     _render_section_a(signals)
     _render_section_b(signals)
     _render_section_c(signals)
+    st.divider()
+    _render_section_d(signals)
