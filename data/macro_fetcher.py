@@ -11,6 +11,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
+import yfinance as yf
+
 logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------
@@ -86,3 +88,27 @@ def _signal_arrow(signal: str) -> str:
     if signal in ("falling", "contracting"):
         return "↓"
     return "?"
+
+
+# --------------------------------------------------------------------------
+# Live signal fetchers
+# --------------------------------------------------------------------------
+
+def _fetch_rates_signal(region: str, ticker: str) -> str:
+    """Compare 10Y yield today vs ~63 trading days ago. Returns rising/falling/unknown."""
+    try:
+        hist = yf.Ticker(ticker).history(period="6mo", interval="1d")
+        if hist is None or hist.empty or "Close" not in hist.columns:
+            logger.warning("rates: empty history for %s (%s)", region, ticker)
+            return "unknown"
+        closes = hist["Close"].dropna()
+        if len(closes) < 20:
+            logger.warning("rates: too few points for %s (%s)", region, ticker)
+            return "unknown"
+        latest = float(closes.iloc[-1])
+        lookback_idx = max(0, len(closes) - 64)
+        prior = float(closes.iloc[lookback_idx])
+        return "rising" if latest > prior else "falling"
+    except Exception as exc:
+        logger.warning("rates: fetch failed for %s (%s): %s", region, ticker, exc)
+        return "unknown"

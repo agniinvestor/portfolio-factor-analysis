@@ -110,3 +110,53 @@ class TestSignalArrow:
 
     def test_arbitrary_string_returns_question_mark(self):
         assert mf._signal_arrow("anything_else") == "?"
+
+
+import pandas as pd
+
+
+class TestFetchRatesSignal:
+    def test_rising_when_yield_up(self, monkeypatch):
+        """Yield today > yield 3 months ago -> rising."""
+        idx = pd.date_range("2026-01-01", periods=90, freq="D")
+        series = pd.Series(range(90), index=idx, dtype="float64")  # strictly increasing
+        df = pd.DataFrame({"Close": series})
+
+        class FakeTicker:
+            def __init__(self, ticker): self.ticker = ticker
+            def history(self, period="6mo", interval="1d"):
+                return df
+
+        monkeypatch.setattr(mf, "yf", type("YF", (), {"Ticker": FakeTicker}))
+        assert mf._fetch_rates_signal("US", "^TNX") == "rising"
+
+    def test_falling_when_yield_down(self, monkeypatch):
+        idx = pd.date_range("2026-01-01", periods=90, freq="D")
+        series = pd.Series(range(90, 0, -1), index=idx, dtype="float64")
+        df = pd.DataFrame({"Close": series})
+
+        class FakeTicker:
+            def __init__(self, ticker): pass
+            def history(self, period="6mo", interval="1d"):
+                return df
+
+        monkeypatch.setattr(mf, "yf", type("YF", (), {"Ticker": FakeTicker}))
+        assert mf._fetch_rates_signal("US", "^TNX") == "falling"
+
+    def test_empty_returns_unknown(self, monkeypatch):
+        class FakeTicker:
+            def __init__(self, ticker): pass
+            def history(self, period="6mo", interval="1d"):
+                return pd.DataFrame()
+
+        monkeypatch.setattr(mf, "yf", type("YF", (), {"Ticker": FakeTicker}))
+        assert mf._fetch_rates_signal("US", "^TNX") == "unknown"
+
+    def test_exception_returns_unknown(self, monkeypatch):
+        class FakeTicker:
+            def __init__(self, ticker): pass
+            def history(self, period="6mo", interval="1d"):
+                raise RuntimeError("network down")
+
+        monkeypatch.setattr(mf, "yf", type("YF", (), {"Ticker": FakeTicker}))
+        assert mf._fetch_rates_signal("US", "^TNX") == "unknown"
