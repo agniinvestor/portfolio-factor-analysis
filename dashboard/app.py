@@ -734,7 +734,24 @@ with tab5:
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab6:
     macro_refresh = st.button("Refresh macro signals", key="macro_refresh")
-    fred_api_key = st.secrets.get("fred", {}).get("api_key") if hasattr(st, "secrets") else None
+
+    # Robust secrets access — handles missing section header or unavailable secrets
+    fred_api_key = None
+    try:
+        fred_api_key = st.secrets["fred"]["api_key"]
+    except (KeyError, AttributeError, FileNotFoundError):
+        try:
+            fred_api_key = st.secrets.get("api_key")  # fallback: top-level key
+        except Exception:
+            fred_api_key = None
+
+    if not fred_api_key:
+        st.warning(
+            "FRED API key not found in secrets. Inflation and some rates signals will show as Unknown. "
+            "Add `[fred]\\napi_key = \\'YOUR_KEY\\'` to Streamlit secrets.",
+            icon="⚠️",
+        )
+
     try:
         signals = fetch_macro_signals(
             force_refresh=macro_refresh,
@@ -743,4 +760,20 @@ with tab6:
     except Exception as exc:
         st.error(f"Failed to fetch macro signals: {exc}")
         signals = {}
+
+    # Debug expander — shows raw signal values so users can see what resolved
+    if signals:
+        with st.expander("Signal details", expanded=False):
+            rows = []
+            for region, s in signals.items():
+                rows.append({
+                    "Region": region,
+                    "Rates": s.get("rates", "—"),
+                    "Growth": s.get("growth", "—"),
+                    "Inflation": s.get("inflation", "—"),
+                    "Regime": s.get("regime", "—"),
+                })
+            import pandas as pd
+            st.dataframe(pd.DataFrame(rows).set_index("Region"), use_container_width=True)
+
     tab_macro_regime.render(signals, force_refresh=macro_refresh)
