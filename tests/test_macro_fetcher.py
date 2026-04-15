@@ -129,7 +129,9 @@ class TestFetchRatesSignal:
                 return df
 
         monkeypatch.setattr(mf, "yf", type("YF", (), {"Ticker": FakeTicker}))
-        assert mf._fetch_rates_signal("US", "^TNX") == "rising"
+        signal, val = mf._fetch_rates_signal("US", "^TNX")
+        assert signal == "rising"
+        assert val.endswith("%")
 
     def test_falling_when_yield_down(self, monkeypatch):
         idx = pd.date_range("2026-01-01", periods=90, freq="B")
@@ -142,7 +144,7 @@ class TestFetchRatesSignal:
                 return df
 
         monkeypatch.setattr(mf, "yf", type("YF", (), {"Ticker": FakeTicker}))
-        assert mf._fetch_rates_signal("US", "^TNX") == "falling"
+        assert mf._fetch_rates_signal("US", "^TNX")[0] == "falling"
 
     def test_empty_returns_unknown(self, monkeypatch):
         class FakeTicker:
@@ -151,7 +153,7 @@ class TestFetchRatesSignal:
                 return pd.DataFrame()
 
         monkeypatch.setattr(mf, "yf", type("YF", (), {"Ticker": FakeTicker}))
-        assert mf._fetch_rates_signal("US", "^TNX") == "unknown"
+        assert mf._fetch_rates_signal("US", "^TNX")[0] == "unknown"
 
     def test_exception_returns_unknown(self, monkeypatch):
         class FakeTicker:
@@ -160,7 +162,7 @@ class TestFetchRatesSignal:
                 raise RuntimeError("network down")
 
         monkeypatch.setattr(mf, "yf", type("YF", (), {"Ticker": FakeTicker}))
-        assert mf._fetch_rates_signal("US", "^TNX") == "unknown"
+        assert mf._fetch_rates_signal("US", "^TNX")[0] == "unknown"
 
     def test_too_few_points_returns_unknown(self, monkeypatch):
         idx = pd.date_range("2026-01-01", periods=15, freq="B")
@@ -169,7 +171,7 @@ class TestFetchRatesSignal:
             def __init__(self, ticker): pass
             def history(self, **_): return df
         monkeypatch.setattr(mf, "yf", type("YF", (), {"Ticker": FakeTicker}))
-        assert mf._fetch_rates_signal("US", "^TNX") == "unknown"
+        assert mf._fetch_rates_signal("US", "^TNX")[0] == "unknown"
 
 
 class TestFetchRatesSignalFred:
@@ -184,33 +186,35 @@ class TestFetchRatesSignalFred:
         # values[0]=latest=7.0, values[3]=prior=6.0 → rising
         resp = self._make_resp([7.0, 6.8, 6.5, 6.0, 5.9, 5.8])
         monkeypatch.setattr(mf.requests, "get", lambda *a, **kw: resp)
-        assert mf._fetch_rates_signal_fred("India", "INDIRLTLT01STM", "key") == "rising"
+        signal, val = mf._fetch_rates_signal_fred("India", "INDIRLTLT01STM", "key")
+        assert signal == "rising"
+        assert val == "7.00%"
 
     def test_falling_when_latest_below_prior(self, monkeypatch):
         resp = self._make_resp([5.0, 5.5, 5.8, 6.5, 6.7, 6.9])
         monkeypatch.setattr(mf.requests, "get", lambda *a, **kw: resp)
-        assert mf._fetch_rates_signal_fred("Japan", "IRLTLT01JPM156N", "key") == "falling"
+        assert mf._fetch_rates_signal_fred("Japan", "IRLTLT01JPM156N", "key")[0] == "falling"
 
     def test_flat_returns_unknown(self, monkeypatch):
         # diff < RATES_BPS_THRESHOLD
         resp = self._make_resp([6.0, 6.01, 6.02, 6.0, 5.99, 5.98])
         monkeypatch.setattr(mf.requests, "get", lambda *a, **kw: resp)
-        assert mf._fetch_rates_signal_fred("Europe", "IRLTLT01DEM156N", "key") == "unknown"
+        assert mf._fetch_rates_signal_fred("Europe", "IRLTLT01DEM156N", "key")[0] == "unknown"
 
     def test_no_api_key_returns_unknown(self, monkeypatch):
         monkeypatch.setattr(mf.requests, "get", lambda *a, **kw: (_ for _ in ()).throw(AssertionError("should not call")))
-        assert mf._fetch_rates_signal_fred("India", "INDIRLTLT01STM", None) == "unknown"
+        assert mf._fetch_rates_signal_fred("India", "INDIRLTLT01STM", None)[0] == "unknown"
 
     def test_too_few_obs_returns_unknown(self, monkeypatch):
         resp = self._make_resp([6.0, 6.1, 6.2])  # only 3 values, need 4
         monkeypatch.setattr(mf.requests, "get", lambda *a, **kw: resp)
-        assert mf._fetch_rates_signal_fred("India", "INDIRLTLT01STM", "key") == "unknown"
+        assert mf._fetch_rates_signal_fred("India", "INDIRLTLT01STM", "key")[0] == "unknown"
 
     def test_request_exception_returns_unknown(self, monkeypatch):
         def bad_get(*a, **kw):
             raise RuntimeError("network error")
         monkeypatch.setattr(mf.requests, "get", bad_get)
-        assert mf._fetch_rates_signal_fred("India", "INDIRLTLT01STM", "key") == "unknown"
+        assert mf._fetch_rates_signal_fred("India", "INDIRLTLT01STM", "key")[0] == "unknown"
 
 
 class TestFetchGrowthSignal:
@@ -226,7 +230,9 @@ class TestFetchGrowthSignal:
                 return df
 
         monkeypatch.setattr(mf, "yf", type("YF", (), {"Ticker": FakeTicker}))
-        assert mf._fetch_growth_signal("US") == "expanding"
+        signal, val = mf._fetch_growth_signal("US")
+        assert signal == "expanding"
+        assert val.endswith("%")
 
     def test_us_contracting_when_sp500_down(self, monkeypatch):
         idx = pd.date_range("2026-01-01", periods=90, freq="B")
@@ -239,7 +245,7 @@ class TestFetchGrowthSignal:
                 return df
 
         monkeypatch.setattr(mf, "yf", type("YF", (), {"Ticker": FakeTicker}))
-        assert mf._fetch_growth_signal("US") == "contracting"
+        assert mf._fetch_growth_signal("US")[0] == "contracting"
 
     def test_india_uses_equity_proxy_positive(self, monkeypatch):
         idx = pd.date_range("2026-01-01", periods=90, freq="B")
@@ -252,7 +258,7 @@ class TestFetchGrowthSignal:
                 return df
 
         monkeypatch.setattr(mf, "yf", type("YF", (), {"Ticker": FakeTicker}))
-        assert mf._fetch_growth_signal("India", None) == "expanding"
+        assert mf._fetch_growth_signal("India", None)[0] == "expanding"
 
     def test_japan_equity_proxy_negative(self, monkeypatch):
         idx = pd.date_range("2026-01-01", periods=90, freq="B")
@@ -265,7 +271,7 @@ class TestFetchGrowthSignal:
                 return df
 
         monkeypatch.setattr(mf, "yf", type("YF", (), {"Ticker": FakeTicker}))
-        assert mf._fetch_growth_signal("Japan", None) == "contracting"
+        assert mf._fetch_growth_signal("Japan", None)[0] == "contracting"
 
     def test_europe_exception_returns_unknown(self, monkeypatch):
         class FakeTicker:
@@ -274,7 +280,7 @@ class TestFetchGrowthSignal:
                 raise RuntimeError("boom")
 
         monkeypatch.setattr(mf, "yf", type("YF", (), {"Ticker": FakeTicker}))
-        assert mf._fetch_growth_signal("Europe", None) == "unknown"
+        assert mf._fetch_growth_signal("Europe", None)[0] == "unknown"
 
 
 class TestFetchInflationSignal:
@@ -305,7 +311,9 @@ class TestFetchInflationSignal:
             def raise_for_status(self): pass
 
         monkeypatch.setattr(mf.requests, "get", lambda *a, **k: FakeResp())
-        assert mf._fetch_inflation_signal("US", "CPIAUCSL", "FAKE_KEY") == "rising"
+        signal, val = mf._fetch_inflation_signal("US", "CPIAUCSL", "FAKE_KEY")
+        assert signal == "rising"
+        assert val.endswith("%")
 
     def test_falling_when_recent_3m_yoy_lt_prior_3m_yoy(self, monkeypatch):
         # Decelerating CPI
@@ -325,10 +333,10 @@ class TestFetchInflationSignal:
             def raise_for_status(self): pass
 
         monkeypatch.setattr(mf.requests, "get", lambda *a, **k: FakeResp())
-        assert mf._fetch_inflation_signal("US", "CPIAUCSL", "FAKE_KEY") == "falling"
+        assert mf._fetch_inflation_signal("US", "CPIAUCSL", "FAKE_KEY")[0] == "falling"
 
     def test_no_api_key_returns_unknown(self):
-        assert mf._fetch_inflation_signal("US", "CPIAUCSL", None) == "unknown"
+        assert mf._fetch_inflation_signal("US", "CPIAUCSL", None)[0] == "unknown"
 
     def test_http_error_returns_unknown(self, monkeypatch):
         class FakeResp:
@@ -337,7 +345,7 @@ class TestFetchInflationSignal:
             def raise_for_status(self): raise RuntimeError("500")
 
         monkeypatch.setattr(mf.requests, "get", lambda *a, **k: FakeResp())
-        assert mf._fetch_inflation_signal("US", "CPIAUCSL", "FAKE_KEY") == "unknown"
+        assert mf._fetch_inflation_signal("US", "CPIAUCSL", "FAKE_KEY")[0] == "unknown"
 
     def test_insufficient_observations_returns_unknown(self, monkeypatch):
         payload = {"observations": [{"date": "2026-03-01", "value": "130"}]}
@@ -348,7 +356,7 @@ class TestFetchInflationSignal:
             def raise_for_status(self): pass
 
         monkeypatch.setattr(mf.requests, "get", lambda *a, **k: FakeResp())
-        assert mf._fetch_inflation_signal("US", "CPIAUCSL", "FAKE_KEY") == "unknown"
+        assert mf._fetch_inflation_signal("US", "CPIAUCSL", "FAKE_KEY")[0] == "unknown"
 
 
 class TestFetchMacroSignals:
@@ -383,11 +391,11 @@ class TestFetchMacroSignals:
         cache_file = tmp_path / "macro_regime.json"
         monkeypatch.setattr(mf, "CACHE_PATH", cache_file)
 
-        monkeypatch.setattr(mf, "_fetch_rates_signal",          lambda r, t: "falling")
-        monkeypatch.setattr(mf, "_fetch_rates_signal_fred",     lambda r, s, k: "falling")
-        monkeypatch.setattr(mf, "_fetch_growth_signal",         lambda r: "expanding")
-        monkeypatch.setattr(mf, "_fetch_inflation_signal",      lambda r, s, k: "falling")
-        monkeypatch.setattr(mf, "_fetch_inflation_signal_yoy",  lambda r, s, k, fetch_limit=12: "falling")
+        monkeypatch.setattr(mf, "_fetch_rates_signal",          lambda r, t: ("falling", "4.00%"))
+        monkeypatch.setattr(mf, "_fetch_rates_signal_fred",     lambda r, s, k: ("falling", "6.00%"))
+        monkeypatch.setattr(mf, "_fetch_growth_signal",         lambda r: ("expanding", "+5.0%"))
+        monkeypatch.setattr(mf, "_fetch_inflation_signal",      lambda r, s, k: ("falling", "2.5%"))
+        monkeypatch.setattr(mf, "_fetch_inflation_signal_yoy",  lambda r, s, k, fetch_limit=12: ("falling", "3.0%"))
 
         out = mf.fetch_macro_signals(force_refresh=True, fred_api_key="X")
         assert out["US"]["regime"] == "Goldilocks"
@@ -404,11 +412,11 @@ class TestFetchMacroSignals:
                                "color": "#f39c12"}},
         }))
         monkeypatch.setattr(mf, "CACHE_PATH", cache_file)
-        monkeypatch.setattr(mf, "_fetch_rates_signal",          lambda r, t: "falling")
-        monkeypatch.setattr(mf, "_fetch_rates_signal_fred",     lambda r, s, k: "falling")
-        monkeypatch.setattr(mf, "_fetch_growth_signal",         lambda r: "expanding")
-        monkeypatch.setattr(mf, "_fetch_inflation_signal",      lambda r, s, k: "falling")
-        monkeypatch.setattr(mf, "_fetch_inflation_signal_yoy",  lambda r, s, k, fetch_limit=12: "falling")
+        monkeypatch.setattr(mf, "_fetch_rates_signal",          lambda r, t: ("falling", "4.00%"))
+        monkeypatch.setattr(mf, "_fetch_rates_signal_fred",     lambda r, s, k: ("falling", "6.00%"))
+        monkeypatch.setattr(mf, "_fetch_growth_signal",         lambda r: ("expanding", "+5.0%"))
+        monkeypatch.setattr(mf, "_fetch_inflation_signal",      lambda r, s, k: ("falling", "2.5%"))
+        monkeypatch.setattr(mf, "_fetch_inflation_signal_yoy",  lambda r, s, k, fetch_limit=12: ("falling", "3.0%"))
 
         out = mf.fetch_macro_signals(force_refresh=False, fred_api_key="X")
         assert out["US"]["regime"] == "Goldilocks"
@@ -416,14 +424,17 @@ class TestFetchMacroSignals:
     def test_output_shape(self, monkeypatch, tmp_path):
         cache_file = tmp_path / "macro_regime.json"
         monkeypatch.setattr(mf, "CACHE_PATH", cache_file)
-        monkeypatch.setattr(mf, "_fetch_rates_signal",          lambda r, t: "rising")
-        monkeypatch.setattr(mf, "_fetch_rates_signal_fred",     lambda r, s, k: "rising")
-        monkeypatch.setattr(mf, "_fetch_growth_signal",         lambda r: "contracting")
-        monkeypatch.setattr(mf, "_fetch_inflation_signal",      lambda r, s, k: "rising")
-        monkeypatch.setattr(mf, "_fetch_inflation_signal_yoy",  lambda r, s, k, fetch_limit=12: "rising")
+        monkeypatch.setattr(mf, "_fetch_rates_signal",          lambda r, t: ("rising", "4.50%"))
+        monkeypatch.setattr(mf, "_fetch_rates_signal_fred",     lambda r, s, k: ("rising", "7.00%"))
+        monkeypatch.setattr(mf, "_fetch_growth_signal",         lambda r: ("contracting", "-3.1%"))
+        monkeypatch.setattr(mf, "_fetch_inflation_signal",      lambda r, s, k: ("rising", "4.2%"))
+        monkeypatch.setattr(mf, "_fetch_inflation_signal_yoy",  lambda r, s, k, fetch_limit=12: ("rising", "5.1%"))
 
         out = mf.fetch_macro_signals(force_refresh=True, fred_api_key="X")
         assert set(out.keys()) == {"US", "India", "Japan", "Europe"}
         for region, d in out.items():
-            assert set(d.keys()) == {"rates", "growth", "inflation", "regime", "color"}
+            assert set(d.keys()) == {
+                "rates", "growth", "inflation", "regime", "color",
+                "rates_value", "growth_value", "inflation_value",
+            }
         assert out["US"]["regime"] == "Stagflation"

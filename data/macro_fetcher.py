@@ -133,33 +133,34 @@ def _signal_arrow(signal: str) -> str:
 # Live signal fetchers
 # --------------------------------------------------------------------------
 
-def _fetch_rates_signal(region: str, ticker: str) -> str:
-    """Compare 10Y yield today vs ~63 trading days ago. Returns rising/falling/unknown."""
+def _fetch_rates_signal(region: str, ticker: str) -> tuple[str, str]:
+    """Compare 10Y yield today vs ~63 trading days ago. Returns (signal, value_str)."""
     try:
         hist = yf.Ticker(ticker).history(period="6mo", interval="1d")
         if hist is None or hist.empty or "Close" not in hist.columns:
             logger.warning("rates: empty history for %s (%s)", region, ticker)
-            return "unknown"
+            return "unknown", "—"
         closes = hist["Close"].dropna()
         if len(closes) < MIN_RATES_LOOKBACK:
             logger.warning("rates: too few points (%d) for %s (%s)", len(closes), region, ticker)
-            return "unknown"
+            return "unknown", "—"
         latest = float(closes.iloc[-1])
         prior = float(closes.iloc[-MIN_RATES_LOOKBACK])
         diff = latest - prior
         if abs(diff) < RATES_BPS_THRESHOLD:
-            return "unknown"
-        return "rising" if diff > 0 else "falling"
+            return "unknown", f"{latest:.2f}%"
+        signal = "rising" if diff > 0 else "falling"
+        return signal, f"{latest:.2f}%"
     except Exception as exc:
         logger.warning("rates: fetch failed for %s (%s): %s", region, ticker, exc)
-        return "unknown"
+        return "unknown", "—"
 
 
-def _fetch_rates_signal_fred(region: str, series_id: str, fred_api_key: Optional[str]) -> str:
-    """Fetch 10Y yield from FRED monthly series. Compare latest vs 3 months ago."""
+def _fetch_rates_signal_fred(region: str, series_id: str, fred_api_key: Optional[str]) -> tuple[str, str]:
+    """Fetch 10Y yield from FRED monthly series. Returns (signal, value_str)."""
     if not fred_api_key:
         logger.warning("rates_fred(%s): no FRED api_key; returning unknown", region)
-        return "unknown"
+        return "unknown", "—"
     try:
         params = {
             "series_id": series_id,
@@ -181,51 +182,54 @@ def _fetch_rates_signal_fred(region: str, series_id: str, fred_api_key: Optional
                     pass
         if len(values) < 4:
             logger.warning("rates_fred(%s): only %d observations", region, len(values))
-            return "unknown"
+            return "unknown", "—"
         latest = values[0]
         prior = values[3]  # ~3 months ago
         diff = latest - prior
         if abs(diff) < RATES_BPS_THRESHOLD:
-            return "unknown"
-        return "rising" if diff > 0 else "falling"
+            return "unknown", f"{latest:.2f}%"
+        signal = "rising" if diff > 0 else "falling"
+        return signal, f"{latest:.2f}%"
     except Exception as exc:
         logger.warning("rates_fred(%s): FRED fetch failed: %s", region, exc)
-        return "unknown"
+        return "unknown", "—"
 
 
-def _fetch_growth_signal(region: str, _fred_api_key: Optional[str] = None) -> str:
+def _fetch_growth_signal(region: str, _fred_api_key: Optional[str] = None) -> tuple[str, str]:
     """
     3-month equity index return as growth proxy for all regions.
-    Positive return -> expanding; negative -> contracting.
+    Returns (signal, value_str) where value_str is the 3M return as a percentage.
     """
     ticker = EQUITY_TICKERS.get(region)
     if ticker is None:
         logger.warning("growth: unknown region %s", region)
-        return "unknown"
+        return "unknown", "—"
     try:
         hist = yf.Ticker(ticker).history(period="6mo", interval="1d")
         if hist is None or hist.empty or "Close" not in hist.columns:
-            return "unknown"
+            return "unknown", "—"
         closes = hist["Close"].dropna()
         if len(closes) < MIN_RATES_LOOKBACK:
-            return "unknown"
+            return "unknown", "—"
         latest = float(closes.iloc[-1])
         prior = float(closes.iloc[-MIN_RATES_LOOKBACK])
-        return "expanding" if latest > prior else "contracting"
+        pct = (latest / prior - 1.0) * 100
+        signal = "expanding" if latest > prior else "contracting"
+        return signal, f"{pct:+.1f}%"
     except Exception as exc:
         logger.warning("growth(%s): fetch failed: %s", region, exc)
-        return "unknown"
+        return "unknown", "—"
 
 
-def _fetch_inflation_signal(region: str, series_id: str, fred_api_key: Optional[str]) -> str:
+def _fetch_inflation_signal(region: str, series_id: str, fred_api_key: Optional[str]) -> tuple[str, str]:
     """
     CPI index YoY trend: compare recent 3M avg YoY vs prior 3M avg YoY.
     Uses CPI price-index series. Needs >= 18 valid monthly observations.
-    Returns rising/falling/unknown.
+    Returns (signal, value_str) where value_str is the recent YoY inflation rate.
     """
     if not fred_api_key:
         logger.warning("inflation(%s): no FRED api_key; returning unknown", region)
-        return "unknown"
+        return "unknown", "—"
     try:
         params = {
             "series_id": series_id,
@@ -247,7 +251,7 @@ def _fetch_inflation_signal(region: str, series_id: str, fred_api_key: Optional[
                     pass
         if len(values) < 18:
             logger.warning("inflation(%s): only %d observations", region, len(values))
-            return "unknown"
+            return "unknown", "—"
 
         # values[0] = latest month (desc order)
         recent_3m_avg   = sum(values[0:3]) / 3.0    # months 0,1,2
@@ -256,28 +260,29 @@ def _fetch_inflation_signal(region: str, series_id: str, fred_api_key: Optional[
         prior_yoy_base  = sum(values[15:18]) / 3.0  # 12m earlier for prior window
 
         if recent_yoy_base <= 0 or prior_yoy_base <= 0:
-            return "unknown"
+            return "unknown", "—"
 
         recent_yoy = (recent_3m_avg / recent_yoy_base) - 1.0
         prior_yoy  = (prior_3m_avg  / prior_yoy_base)  - 1.0
 
-        return "rising" if recent_yoy > prior_yoy else "falling"
+        signal = "rising" if recent_yoy > prior_yoy else "falling"
+        return signal, f"{recent_yoy * 100:.1f}%"
     except Exception as exc:
         logger.warning("inflation(%s): FRED fetch failed: %s", region, exc)
-        return "unknown"
+        return "unknown", "—"
 
 
 def _fetch_inflation_signal_yoy(region: str, series_id: str, fred_api_key: Optional[str],
-                                 fetch_limit: int = 12) -> str:
+                                 fetch_limit: int = 12) -> tuple[str, str]:
     """
     CPI YoY % change series (e.g. OECD CPALTT01 series).
     Compares recent 3M avg to prior 3M avg. Needs >= 6 valid observations.
     fetch_limit can be increased (e.g. 36) for series with long publication lags.
-    Returns rising/falling/unknown.
+    Returns (signal, value_str) where value_str is the recent 3M avg YoY rate.
     """
     if not fred_api_key:
         logger.warning("inflation_yoy(%s): no FRED api_key; returning unknown", region)
-        return "unknown"
+        return "unknown", "—"
     try:
         params = {
             "series_id": series_id,
@@ -299,15 +304,16 @@ def _fetch_inflation_signal_yoy(region: str, series_id: str, fred_api_key: Optio
                     pass
         if len(values) < 6:
             logger.warning("inflation_yoy(%s): only %d valid obs (limit=%d)", region, len(values), fetch_limit)
-            return "unknown"
+            return "unknown", "—"
 
         # values are already YoY % change; compare 3M averages
         recent_avg = sum(values[0:3]) / 3.0
         prior_avg  = sum(values[3:6]) / 3.0
-        return "rising" if recent_avg > prior_avg else "falling"
+        signal = "rising" if recent_avg > prior_avg else "falling"
+        return signal, f"{recent_avg:.1f}%"
     except Exception as exc:
         logger.warning("inflation_yoy(%s): FRED fetch failed: %s", region, exc)
-        return "unknown"
+        return "unknown", "—"
 
 
 # --------------------------------------------------------------------------
@@ -356,27 +362,28 @@ def fetch_macro_signals(
     regions = ["US", "India", "Japan", "Europe"]
     signals: dict[str, dict[str, str]] = {}
     for region in regions:
-        # Rates
+        # Rates — each fetcher returns (signal, value_str)
         if region in YIELD_TICKERS:
-            rates = _fetch_rates_signal(region, YIELD_TICKERS[region])
+            rates, rates_val = _fetch_rates_signal(region, YIELD_TICKERS[region])
         else:
-            rates = _fetch_rates_signal_fred(region, YIELD_FRED_SERIES[region], fred_api_key)
+            rates, rates_val = _fetch_rates_signal_fred(region, YIELD_FRED_SERIES[region], fred_api_key)
 
         # Growth — equity index 3M return proxy for all regions
-        growth = _fetch_growth_signal(region)
+        growth, growth_val = _fetch_growth_signal(region)
 
         # Inflation
         if region in CPI_SERIES_INDEX:
-            inflation = _fetch_inflation_signal(region, CPI_SERIES_INDEX[region], fred_api_key)
+            inflation, inflation_val = _fetch_inflation_signal(region, CPI_SERIES_INDEX[region], fred_api_key)
         else:
             limit = CPI_YOY_FETCH_LIMIT.get(region, 12)
-            inflation = _fetch_inflation_signal_yoy(region, CPI_SERIES_YOY[region], fred_api_key,
-                                                     fetch_limit=limit)
+            inflation, inflation_val = _fetch_inflation_signal_yoy(region, CPI_SERIES_YOY[region], fred_api_key,
+                                                                    fetch_limit=limit)
 
         regime_label, color = _determine_regime(rates, growth, inflation)
         signals[region] = {
             "rates": rates, "growth": growth, "inflation": inflation,
             "regime": regime_label, "color": color,
+            "rates_value": rates_val, "growth_value": growth_val, "inflation_value": inflation_val,
         }
 
     _save_cache(signals)
