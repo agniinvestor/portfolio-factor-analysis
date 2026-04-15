@@ -6,8 +6,9 @@ data/cache/macro_regime.json for 24 hours.
 Data source notes:
 - US rates: yfinance ^TNX (daily, reliable)
 - India/Japan/Europe rates: FRED monthly 10Y series (OECD)
-- Growth (all regions): yfinance equity index 3M return proxy
-  (NAPM/ISM PMI is subscriber-only on FRED; free alternative not available)
+- Growth (all regions): OECD Composite Leading Indicator (CLI) via FRED when api_key
+  available; falls back to yfinance equity index 3M return proxy otherwise.
+  CLI series: USALOLITONOSTSAM / INDLOLITONOSTSAM / JPNLOLITONOSTSAM / DEULOLITONOSTSAM
 - US/Europe inflation: FRED CPI index series (CPIAUCSL / CP0000EZ19M086NEST),
   YoY acceleration formula, needs >= 18 valid monthly obs
 - India inflation: FRED OECD YoY % series (CPALTT01INM657N), needs >= 6 obs
@@ -67,8 +68,17 @@ YIELD_FRED_SERIES: dict[str, str] = {
     "Europe": "IRLTLT01DEM156N",
 }
 
-# All regions use 3M equity index return as growth proxy.
-# ISM PMI (NAPM) is subscriber-only on FRED; no free real-time PMI available.
+# OECD Composite Leading Indicators (CLI) — primary growth signal when FRED key available.
+# Normalised around 100: >100 = above-trend expansion, <100 = below-trend contraction.
+# Compare recent 3M avg vs prior 3M avg for direction.
+CLI_FRED_SERIES: dict[str, str] = {
+    "US":     "USALOLITONOSTSAM",
+    "India":  "INDLOLITONOSTSAM",
+    "Japan":  "JPNLOLITONOSTSAM",
+    "Europe": "DEULOLITONOSTSAM",  # Germany as dominant European economy
+}
+
+# Fallback growth proxy when FRED key unavailable: 3M equity index return.
 EQUITY_TICKERS: dict[str, str] = {
     "US":     "^GSPC",
     "India":  "^BSESN",
@@ -195,11 +205,53 @@ def _fetch_rates_signal_fred(region: str, series_id: str, fred_api_key: Optional
         return "unknown", "—"
 
 
-def _fetch_growth_signal(region: str, _fred_api_key: Optional[str] = None) -> tuple[str, str]:
+def _fetch_growth_signal_cli(region: str, series_id: str, fred_api_key: str) -> tuple[str, str]:
     """
-    3-month equity index return as growth proxy for all regions.
-    Returns (signal, value_str) where value_str is the 3M return as a percentage.
+    OECD Composite Leading Indicator from FRED.
+    Compares recent 3M avg vs prior 3M avg for direction. Value = latest CLI level.
+    CLI is normalised around 100: >100 above-trend, <100 below-trend.
+    Returns (signal, value_str).
     """
+    try:
+        params = {
+            "series_id": series_id,
+            "api_key": fred_api_key,
+            "file_type": "json",
+            "sort_order": "desc",
+            "limit": 9,
+        }
+        resp = requests.get(FRED_URL, params=params, timeout=15)
+        resp.raise_for_status()
+        obs = resp.json().get("observations", [])
+        values: list[float] = []
+        for o in obs:
+            v = o.get("value")
+            if v not in (None, ".", ""):
+                try:
+                    values.append(float(v))
+                except ValueError:
+                    pass
+        if len(values) < 6:
+            logger.warning("growth_cli(%s): only %d valid obs", region, len(values))
+            return "unknown", "—"
+        recent_avg = sum(values[0:3]) / 3.0
+        prior_avg  = sum(values[3:6]) / 3.0
+        signal = "expanding" if recent_avg > prior_avg else "contracting"
+        return signal, f"{values[0]:.1f}"
+    except Exception as exc:
+        logger.warning("growth_cli(%s): FRED fetch failed: %s", region, exc)
+        return "unknown", "—"
+
+
+def _fetch_growth_signal(region: str, fred_api_key: Optional[str] = None) -> tuple[str, str]:
+    """
+    Growth signal: OECD CLI from FRED (primary) or equity 3M return (fallback).
+    Returns (signal, value_str). Value is CLI level when available, else '—'.
+    """
+    if fred_api_key and region in CLI_FRED_SERIES:
+        return _fetch_growth_signal_cli(region, CLI_FRED_SERIES[region], fred_api_key)
+
+    # Fallback: equity index 3M return proxy (no meaningful display value)
     ticker = EQUITY_TICKERS.get(region)
     if ticker is None:
         logger.warning("growth: unknown region %s", region)
@@ -213,9 +265,8 @@ def _fetch_growth_signal(region: str, _fred_api_key: Optional[str] = None) -> tu
             return "unknown", "—"
         latest = float(closes.iloc[-1])
         prior = float(closes.iloc[-MIN_RATES_LOOKBACK])
-        pct = (latest / prior - 1.0) * 100
         signal = "expanding" if latest > prior else "contracting"
-        return signal, f"{pct:+.1f}%"
+        return signal, "—"
     except Exception as exc:
         logger.warning("growth(%s): fetch failed: %s", region, exc)
         return "unknown", "—"
@@ -368,8 +419,8 @@ def fetch_macro_signals(
         else:
             rates, rates_val = _fetch_rates_signal_fred(region, YIELD_FRED_SERIES[region], fred_api_key)
 
-        # Growth — equity index 3M return proxy for all regions
-        growth, growth_val = _fetch_growth_signal(region)
+        # Growth — OECD CLI (primary) or equity 3M return proxy (fallback)
+        growth, growth_val = _fetch_growth_signal(region, fred_api_key)
 
         # Inflation
         if region in CPI_SERIES_INDEX:

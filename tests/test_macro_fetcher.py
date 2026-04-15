@@ -230,9 +230,9 @@ class TestFetchGrowthSignal:
                 return df
 
         monkeypatch.setattr(mf, "yf", type("YF", (), {"Ticker": FakeTicker}))
-        signal, val = mf._fetch_growth_signal("US")
+        signal, val = mf._fetch_growth_signal("US")  # no FRED key → equity fallback
         assert signal == "expanding"
-        assert val.endswith("%")
+        assert val == "—"  # equity fallback returns no display value
 
     def test_us_contracting_when_sp500_down(self, monkeypatch):
         idx = pd.date_range("2026-01-01", periods=90, freq="B")
@@ -393,7 +393,7 @@ class TestFetchMacroSignals:
 
         monkeypatch.setattr(mf, "_fetch_rates_signal",          lambda r, t: ("falling", "4.00%"))
         monkeypatch.setattr(mf, "_fetch_rates_signal_fred",     lambda r, s, k: ("falling", "6.00%"))
-        monkeypatch.setattr(mf, "_fetch_growth_signal",         lambda r: ("expanding", "+5.0%"))
+        monkeypatch.setattr(mf, "_fetch_growth_signal",         lambda r, k=None: ("expanding", "101.2"))
         monkeypatch.setattr(mf, "_fetch_inflation_signal",      lambda r, s, k: ("falling", "2.5%"))
         monkeypatch.setattr(mf, "_fetch_inflation_signal_yoy",  lambda r, s, k, fetch_limit=12: ("falling", "3.0%"))
 
@@ -414,7 +414,7 @@ class TestFetchMacroSignals:
         monkeypatch.setattr(mf, "CACHE_PATH", cache_file)
         monkeypatch.setattr(mf, "_fetch_rates_signal",          lambda r, t: ("falling", "4.00%"))
         monkeypatch.setattr(mf, "_fetch_rates_signal_fred",     lambda r, s, k: ("falling", "6.00%"))
-        monkeypatch.setattr(mf, "_fetch_growth_signal",         lambda r: ("expanding", "+5.0%"))
+        monkeypatch.setattr(mf, "_fetch_growth_signal",         lambda r, k=None: ("expanding", "101.2"))
         monkeypatch.setattr(mf, "_fetch_inflation_signal",      lambda r, s, k: ("falling", "2.5%"))
         monkeypatch.setattr(mf, "_fetch_inflation_signal_yoy",  lambda r, s, k, fetch_limit=12: ("falling", "3.0%"))
 
@@ -426,7 +426,7 @@ class TestFetchMacroSignals:
         monkeypatch.setattr(mf, "CACHE_PATH", cache_file)
         monkeypatch.setattr(mf, "_fetch_rates_signal",          lambda r, t: ("rising", "4.50%"))
         monkeypatch.setattr(mf, "_fetch_rates_signal_fred",     lambda r, s, k: ("rising", "7.00%"))
-        monkeypatch.setattr(mf, "_fetch_growth_signal",         lambda r: ("contracting", "-3.1%"))
+        monkeypatch.setattr(mf, "_fetch_growth_signal",         lambda r, k=None: ("contracting", "98.5"))
         monkeypatch.setattr(mf, "_fetch_inflation_signal",      lambda r, s, k: ("rising", "4.2%"))
         monkeypatch.setattr(mf, "_fetch_inflation_signal_yoy",  lambda r, s, k, fetch_limit=12: ("rising", "5.1%"))
 

@@ -72,8 +72,12 @@ def _render_section_b(signals: dict[str, dict[str, str]]) -> None:
     for region in REGION_ORDER:
         sig = signals.get(region, {})
         favored, avoided = mf._get_factor_recommendations(sig.get("regime", "Unknown"))
+        growth_val = sig.get("growth_value", "—")
+        growth_str = (f"CLI {growth_val} {mf._signal_arrow(sig.get('growth', 'unknown'))}"
+                      if growth_val != "—"
+                      else mf._signal_arrow(sig.get("growth", "unknown")))
         rows["Rates"].append(f"{sig.get('rates_value', '—')} {mf._signal_arrow(sig.get('rates', 'unknown'))}")
-        rows["Growth"].append(mf._signal_arrow(sig.get('growth', 'unknown')))
+        rows["Growth"].append(growth_str)
         rows["Inflation"].append(f"{sig.get('inflation_value', '—')} {mf._signal_arrow(sig.get('inflation', 'unknown'))}")
         rows["Regime"].append(sig.get("regime", "Unknown"))
         rows["Top Favored Factors"].append(", ".join(favored) if favored else "—")
@@ -82,6 +86,12 @@ def _render_section_b(signals: dict[str, dict[str, str]]) -> None:
     df = pd.DataFrame(rows, index=REGION_ORDER).T
     df.columns = [f"{REGION_FLAGS[r]} {r}" for r in REGION_ORDER]
     st.dataframe(df, use_container_width=True)
+    st.caption(
+        "Rates = 10Y government bond yield. "
+        "Growth = OECD Composite Leading Indicator (CLI), normalised around 100 — "
+        "above 100 signals above-trend expansion, below 100 signals contraction. "
+        "Inflation = CPI YoY %."
+    )
 
 
 _SYMBOL_TO_SCORE: dict[str, int] = {"●": 1, "○": 0, "✕": -1}
