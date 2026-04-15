@@ -200,6 +200,8 @@ with tab2:
 with tab3:
     st.subheader("Per-Stock Style Scorecard (z-scores vs universe)")
     st.caption("Green = strong positive tilt, Red = negative tilt. Scores are z-scored relative to peer universe.")
+    with st.expander("📖 What do these numbers mean?"):
+        st.markdown(TAB3_GLOSSARY)
 
     # Merge momentum into fundamentals
     if "stock_returns_df" in dir() and not stock_returns_df.empty:
