@@ -348,6 +348,8 @@ with tab4:
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab5:
     st.subheader("Portfolio Profile")
+    with st.expander("📖 What do these numbers mean?"):
+        st.markdown(TAB5_GLOSSARY)
 
     # Guard: needs IIMA factor data and regression results
     if iima_factors.empty or "reg_result" not in dir() or "port_scores" not in dir():
@@ -382,13 +384,16 @@ with tab5:
         top_score = port_scores[top_dim]
 
         c1, c2, c3, c4, c5, c6 = st.columns(6)
-        c1.metric("Dominant Factor", dominant_label)
-        c2.metric("Alpha (monthly)", f"{reg_result['alpha']*100:.3f}%",
-                  f"t = {reg_result['alpha_t']:.2f}")
-        c3.metric("R²", f"{reg_result['r_squared']:.3f}")
-        c4.metric("Top Style Tilt", f"{top_dim.capitalize()} ({top_score:+.2f})")
-        c5.metric("Portfolio HHI", f"{hhi:.4f}")
-        c6.metric("Effective N", f"{effective_n:.1f}")
+        c1.metric("Dominant Factor", dominant_label, help=TOOLTIPS["dominant_factor"])
+        c2.metric(
+            "Alpha (monthly)", f"{reg_result['alpha']*100:.3f}%",
+            f"t = {reg_result['alpha_t']:.2f}",
+            help=TOOLTIPS["alpha"],
+        )
+        c3.metric("R²", f"{reg_result['r_squared']:.3f}", help=TOOLTIPS["r_squared"])
+        c4.metric("Top Style Tilt", f"{top_dim.capitalize()} ({top_score:+.2f})", help=TOOLTIPS["top_style_tilt"])
+        c5.metric("Portfolio HHI", f"{hhi:.4f}", help=TOOLTIPS["hhi"])
+        c6.metric("Effective N", f"{effective_n:.1f}", help=TOOLTIPS["effective_n"])
 
         # ── Auto-narrative ────────────────────────────────────────────────────────
         mkt_b = reg_result["betas"]["mkt_rf"]
@@ -562,13 +567,13 @@ with tab5:
             rc1, rc2 = st.columns(2)
             with rc1:
                 st.markdown("**Stock Concentration**")
-                st.metric("HHI", f"{hhi:.4f}", hhi_label)
-                st.metric("Effective N", f"{effective_n:.1f}")
+                st.metric("HHI", f"{hhi:.4f}", hhi_label, help=TOOLTIPS["hhi"])
+                st.metric("Effective N", f"{effective_n:.1f}", help=TOOLTIPS["effective_n"])
                 st.metric("Top 5 Holdings Weight", f"{top5_weight:.1f}%")
 
             with rc2:
                 st.markdown("**Sector Concentration**")
-                st.metric("Sector HHI", f"{sector_hhi:.4f}")
+                st.metric("Sector HHI", f"{sector_hhi:.4f}", help=TOOLTIPS["sector_hhi"])
                 for _, row in top2_sectors.iterrows():
                     st.metric(row["sector"], f"{row['weight']*100:.1f}%")
 
