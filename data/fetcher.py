@@ -7,6 +7,7 @@ from data.cache_manager import is_stale, write_cache, read_cache, CACHE_DIR
 
 IIMA_BASE_URL = "https://faculty.iima.ac.in/iffm/Indian-Fama-French-Momentum/"
 IIMA_CACHE = CACHE_DIR / "iima_factors.parquet"
+_IIMA_SNAPSHOT_PATH = Path(__file__).parent / "iima_factors_snapshot.csv"
 
 
 def parse_iima_csv(csv_text: str) -> pd.DataFrame:
@@ -69,16 +70,33 @@ def _discover_iima_csv_url() -> str:
     raise RuntimeError("Could not find IIMA monthly factor CSV URL on page")
 
 
+def _load_iima_snapshot() -> pd.DataFrame:
+    """Load the committed IIMA snapshot CSV, or return empty DataFrame."""
+    if _IIMA_SNAPSHOT_PATH.exists():
+        df = pd.read_csv(_IIMA_SNAPSHOT_PATH, parse_dates=["date"])
+        return df
+    return pd.DataFrame()
+
+
 def fetch_iima_factors(force_refresh: bool = False) -> pd.DataFrame:
-    """Return IIMA 4-factor monthly data, using cache if fresh."""
+    """Return IIMA 4-factor monthly data, using cache if fresh.
+
+    Falls back to data/iima_factors_snapshot.csv when the IIMA site is unreachable.
+    """
     if not force_refresh and not is_stale(IIMA_CACHE):
         return read_cache(IIMA_CACHE)
-    csv_url = _discover_iima_csv_url()
-    resp = requests.get(csv_url, timeout=60)
-    resp.raise_for_status()
-    df = _parse_iima_live_csv(resp.text)
-    write_cache(df, IIMA_CACHE)
-    return df
+    try:
+        csv_url = _discover_iima_csv_url()
+        resp = requests.get(csv_url, timeout=60)
+        resp.raise_for_status()
+        df = _parse_iima_live_csv(resp.text)
+        write_cache(df, IIMA_CACHE)
+        return df
+    except Exception:
+        snapshot = _load_iima_snapshot()
+        if not snapshot.empty:
+            return snapshot
+        return pd.DataFrame()
 
 
 import re
