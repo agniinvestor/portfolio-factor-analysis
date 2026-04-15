@@ -13,6 +13,7 @@ from data.cache_manager import is_stale, CACHE_DIR
 from factors.scorer import compute_style_scores, compute_portfolio_scores, compute_nifty500_percentile_scores
 from factors.regression import build_portfolio_returns, run_carhart_regression, rolling_carhart_betas, factor_return_attribution
 from dashboard import tab_macro_regime
+from dashboard.explanations import TOOLTIPS, TAB2_GLOSSARY, TAB3_GLOSSARY, TAB5_GLOSSARY
 from data.macro_fetcher import fetch_macro_signals
 
 PORTFOLIO_PATH = Path(__file__).parent.parent / "portfolio.xlsx"
@@ -121,6 +122,8 @@ with tab1:
 with tab2:
     st.subheader(f"Carhart 4-Factor Regression ({window_years}Y window)")
     st.caption("Source: IIMA Indian Fama-French-Momentum dataset (survivorship-bias adjusted)")
+    with st.expander("📖 What do these numbers mean?"):
+        st.markdown(TAB2_GLOSSARY)
 
     if iima_factors.empty:
         st.info("IIMA factor data is currently unavailable (source unreachable). This tab will populate once the data source is back online.")
@@ -144,10 +147,13 @@ with tab2:
 
             # Summary metrics
             col1, col2, col3 = st.columns(3)
-            col1.metric("Alpha (monthly)", f"{reg_result['alpha']*100:.3f}%",
-                        f"t = {reg_result['alpha_t']:.2f}")
-            col2.metric("R²", f"{reg_result['r_squared']:.3f}")
-            col3.metric("Observations", reg_result["n_obs"])
+            col1.metric(
+                "Alpha (monthly)", f"{reg_result['alpha']*100:.3f}%",
+                f"t = {reg_result['alpha_t']:.2f}",
+                help=TOOLTIPS["alpha"],
+            )
+            col2.metric("R²", f"{reg_result['r_squared']:.3f}", help=TOOLTIPS["r_squared"])
+            col3.metric("Observations", reg_result["n_obs"], help=TOOLTIPS["observations"])
 
             # Factor table
             reg_rows = []
