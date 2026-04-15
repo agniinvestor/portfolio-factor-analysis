@@ -100,6 +100,23 @@ style_scores = compute_style_scores(fundamentals)
 weights_series = portfolio.set_index("ticker")["weight"]
 port_scores = compute_portfolio_scores(style_scores, weights_series)
 
+# ── Sidebar: Portfolio at a Glance ───────────────────────────────────────────
+with st.sidebar:
+    st.divider()
+    st.markdown("**Portfolio at a Glance**")
+    total_value = portfolio["value"].sum()
+    top_sector_row = portfolio.groupby("sector")["weight"].sum().idxmax()
+    top_sector_wt = portfolio.groupby("sector")["weight"].sum().max()
+    st.metric("Total Value", f"₹{total_value:,.0f}")
+    st.metric("Holdings", f"{len(portfolio)} stocks")
+    st.metric("Top Sector", f"{top_sector_row}  {top_sector_wt*100:.0f}%")
+    if reg_result is not None:
+        st.metric("Effective N", f"{effective_n:.1f}", help="1 ÷ HHI — equivalent equal-weight holdings")
+        alpha_pct = reg_result["alpha"] * 100
+        st.metric("Alpha (monthly)", f"{alpha_pct:+.3f}%", help="Excess return above factor model prediction")
+    else:
+        st.caption("Factor data loading…")
+
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "Portfolio Overview",
