@@ -61,6 +61,45 @@ def get_fundamentals(tickers_tuple, force):
 iima_factors = get_iima(force_refresh)
 fundamentals = get_fundamentals(tuple(portfolio["ticker"].tolist()), force_refresh)
 
+# ── Shared computation (sidebar + multiple tabs) ──────────────────────────────
+@st.cache_data(show_spinner="Fetching price history…")
+def get_all_prices(tickers_tuple, force):
+    return fetch_all_prices(list(tickers_tuple), years=6, force_refresh=force)
+
+stock_returns_df = get_all_prices(tuple(portfolio["ticker"].tolist()), force_refresh)
+weights_dict = portfolio.set_index("ticker")["weight"].to_dict()
+
+port_returns = None
+reg_result = None
+if not iima_factors.empty and not stock_returns_df.empty:
+    port_returns = build_portfolio_returns(stock_returns_df, weights_dict)
+    reg_result = run_carhart_regression(port_returns, iima_factors, window_years=window_years)
+
+hhi = (portfolio["weight"] ** 2).sum()
+effective_n = 1 / hhi if hhi > 0 else len(portfolio)
+
+if not stock_returns_df.empty:
+    mom = {}
+    for ticker in portfolio["ticker"]:
+        if ticker in stock_returns_df.columns:
+            r = stock_returns_df[ticker].dropna()
+            if len(r) >= 13:
+                mom[ticker] = (1 + r.iloc[-12:-1]).prod() - 1
+            elif len(r) > 1:
+                mom[ticker] = (1 + r).prod() - 1
+    fundamentals["momentum_12m_1m"] = fundamentals["ticker"].map(mom).fillna(0)
+else:
+    fundamentals["momentum_12m_1m"] = 0.0
+
+if "revenue_cagr_3y" not in fundamentals.columns:
+    fundamentals["revenue_cagr_3y"] = 0.0
+if "net_margin" not in fundamentals.columns:
+    fundamentals["net_margin"] = 0.0
+
+style_scores = compute_style_scores(fundamentals)
+weights_series = portfolio.set_index("ticker")["weight"]
+port_scores = compute_portfolio_scores(style_scores, weights_series)
+
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "Portfolio Overview",
@@ -125,22 +164,12 @@ with tab2:
     with st.expander("📖 What do these numbers mean?"):
         st.markdown(TAB2_GLOSSARY)
 
-    if iima_factors.empty:
+    if iima_factors.empty or reg_result is None:
         st.info("IIMA factor data is currently unavailable (source unreachable). This tab will populate once the data source is back online.")
     else:
-        @st.cache_data(show_spinner="Fetching price history…")
-        def get_all_prices(tickers_tuple, force):
-            return fetch_all_prices(list(tickers_tuple), years=6, force_refresh=force)
-
-        stock_returns_df = get_all_prices(tuple(portfolio["ticker"].tolist()), force_refresh)
-        weights_dict = portfolio.set_index("ticker")["weight"].to_dict()
-
         if stock_returns_df.empty:
             st.warning("No price data available. Click Refresh Data to fetch.")
         else:
-            port_returns = build_portfolio_returns(stock_returns_df, weights_dict)
-            reg_result = run_carhart_regression(port_returns, iima_factors, window_years=window_years)
-
             factors_display = ["mkt_rf", "smb", "hml", "wml"]
             factor_labels = {"mkt_rf": "Market (Rm-Rf)", "smb": "Size (SMB)",
                              "hml": "Value (HML)", "wml": "Momentum (WML)"}
@@ -202,29 +231,6 @@ with tab3:
     st.caption("Green = strong positive tilt, Red = negative tilt. Scores are z-scored relative to peer universe.")
     with st.expander("📖 What do these numbers mean?"):
         st.markdown(TAB3_GLOSSARY)
-
-    # Merge momentum into fundamentals
-    if "stock_returns_df" in dir() and not stock_returns_df.empty:
-        mom = {}
-        for ticker in portfolio["ticker"]:
-            if ticker in stock_returns_df.columns:
-                r = stock_returns_df[ticker].dropna()
-                if len(r) >= 13:
-                    mom[ticker] = (1 + r.iloc[-12:-1]).prod() - 1  # 12M-1M
-                elif len(r) > 1:
-                    mom[ticker] = (1 + r).prod() - 1
-        fundamentals["momentum_12m_1m"] = fundamentals["ticker"].map(mom).fillna(0)
-    else:
-        fundamentals["momentum_12m_1m"] = 0.0
-
-    if "revenue_cagr_3y" not in fundamentals.columns:
-        fundamentals["revenue_cagr_3y"] = 0.0
-    if "net_margin" not in fundamentals.columns:
-        fundamentals["net_margin"] = 0.0
-
-    style_scores = compute_style_scores(fundamentals)
-    weights_series = portfolio.set_index("ticker")["weight"]
-    port_scores = compute_portfolio_scores(style_scores, weights_series)
 
     # Heatmap
     dims = ["value", "quality", "momentum", "size", "growth", "profitability"]
@@ -292,7 +298,7 @@ with tab4:
     col3.metric("Value (INR)", f"₹{selected_row['value']:,.0f}")
 
     # Style profile for selected stock
-    if "style_scores" in dir():
+    if not stock_returns_df.empty:
         stock_scores = style_scores[style_scores["ticker"] == selected_ticker]
         if not stock_scores.empty:
             st.subheader("Style Profile")
@@ -352,7 +358,7 @@ with tab5:
         st.markdown(TAB5_GLOSSARY)
 
     # Guard: needs IIMA factor data and regression results
-    if iima_factors.empty or "reg_result" not in dir() or "port_scores" not in dir():
+    if iima_factors.empty or reg_result is None:
         st.info("IIMA factor data is currently unavailable (source unreachable). This tab will populate once the data source is back online.")
     else:
 
@@ -373,10 +379,6 @@ with tab5:
             dominant_label = f"{factor_labels_p5[dominant_f]} (β={sig_factors[dominant_f]:.2f})"
         else:
             dominant_label = "None (p>0.05)"
-
-        # HHI and Effective N
-        hhi = (portfolio["weight"] ** 2).sum()
-        effective_n = 1 / hhi if hhi > 0 else len(portfolio)
 
         # Top style tilt
         dims_6 = ["value", "quality", "momentum", "size", "growth", "profitability"]
