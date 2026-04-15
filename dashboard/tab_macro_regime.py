@@ -21,9 +21,6 @@ def _render_region_card(region: str, signal: dict[str, str]) -> None:
     rates = signal.get("rates", "unknown")
     growth = signal.get("growth", "unknown")
     inflation = signal.get("inflation", "unknown")
-    rates_val = signal.get("rates_value", "—")
-    growth_val = signal.get("growth_value", "—")
-    inflation_val = signal.get("inflation_value", "—")
     favored, avoided = mf._get_factor_recommendations(regime)
 
     rates_arrow     = mf._signal_arrow(rates)
@@ -40,23 +37,9 @@ def _render_region_card(region: str, signal: dict[str, str]) -> None:
       <div style="font-size: 22px; font-weight: 700; color: {color}; margin: 6px 0;">
         {regime}
       </div>
-      <table style="font-size:13px; margin:6px 0; border-collapse:collapse; width:100%;">
-        <tr>
-          <td style="padding:2px 0; color:#555;">Rates</td>
-          <td style="padding:2px 6px; font-weight:600;">{rates_val}</td>
-          <td style="padding:2px 0; font-size:16px;">{rates_arrow}</td>
-        </tr>
-        <tr>
-          <td style="padding:2px 0; color:#555;">Growth</td>
-          <td style="padding:2px 6px; font-weight:600;">{growth_val}</td>
-          <td style="padding:2px 0; font-size:16px;">{growth_arrow}</td>
-        </tr>
-        <tr>
-          <td style="padding:2px 0; color:#555;">Inflation</td>
-          <td style="padding:2px 6px; font-weight:600;">{inflation_val}</td>
-          <td style="padding:2px 0; font-size:16px;">{inflation_arrow}</td>
-        </tr>
-      </table>
+      <div style="font-size: 14px; margin: 6px 0;">
+        Rates {rates_arrow} &nbsp;|&nbsp; Growth {growth_arrow} &nbsp;|&nbsp; Inflation {inflation_arrow}
+      </div>
       <div style="font-size: 13px; margin-top: 8px;">
         <b>Favor:</b> {favored_str}<br/>
         <b>Avoid:</b> {avoided_str}
@@ -89,12 +72,9 @@ def _render_section_b(signals: dict[str, dict[str, str]]) -> None:
     for region in REGION_ORDER:
         sig = signals.get(region, {})
         favored, avoided = mf._get_factor_recommendations(sig.get("regime", "Unknown"))
-        rates_val = sig.get("rates_value", "—")
-        growth_val = sig.get("growth_value", "—")
-        inflation_val = sig.get("inflation_value", "—")
-        rows["Rates"].append(f"{rates_val} {mf._signal_arrow(sig.get('rates', 'unknown'))}")
-        rows["Growth"].append(f"{growth_val} {mf._signal_arrow(sig.get('growth', 'unknown'))}")
-        rows["Inflation"].append(f"{inflation_val} {mf._signal_arrow(sig.get('inflation', 'unknown'))}")
+        rows["Rates"].append(f"{sig.get('rates', 'unknown')} {mf._signal_arrow(sig.get('rates', 'unknown'))}")
+        rows["Growth"].append(f"{sig.get('growth', 'unknown')} {mf._signal_arrow(sig.get('growth', 'unknown'))}")
+        rows["Inflation"].append(f"{sig.get('inflation', 'unknown')} {mf._signal_arrow(sig.get('inflation', 'unknown'))}")
         rows["Regime"].append(sig.get("regime", "Unknown"))
         rows["Top Favored Factors"].append(", ".join(favored) if favored else "—")
         rows["Top Avoided Factors"].append(", ".join(avoided) if avoided else "—")

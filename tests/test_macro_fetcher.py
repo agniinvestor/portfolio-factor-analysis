@@ -421,16 +421,9 @@ class TestFetchMacroSignals:
         monkeypatch.setattr(mf, "_fetch_growth_signal",         lambda r: "contracting")
         monkeypatch.setattr(mf, "_fetch_inflation_signal",      lambda r, s, k: "rising")
         monkeypatch.setattr(mf, "_fetch_inflation_signal_yoy",  lambda r, s, k, fetch_limit=12: "rising")
-        monkeypatch.setattr(mf, "_fetch_rates_value",           lambda t: "4.00%")
-        monkeypatch.setattr(mf, "_fetch_rates_value_fred",      lambda s, k: "6.00%")
-        monkeypatch.setattr(mf, "_fetch_growth_value",          lambda r: "+1.0%")
-        monkeypatch.setattr(mf, "_fetch_inflation_value",       lambda s, k: "3.0% YoY")
-        monkeypatch.setattr(mf, "_fetch_inflation_value_yoy",   lambda s, k, fetch_limit=12: "4.0% YoY")
 
         out = mf.fetch_macro_signals(force_refresh=True, fred_api_key="X")
         assert set(out.keys()) == {"US", "India", "Japan", "Europe"}
         for region, d in out.items():
-            assert set(d.keys()) == {"rates", "growth", "inflation",
-                                     "rates_value", "growth_value", "inflation_value",
-                                     "regime", "color"}
+            assert set(d.keys()) == {"rates", "growth", "inflation", "regime", "color"}
         assert out["US"]["regime"] == "Stagflation"

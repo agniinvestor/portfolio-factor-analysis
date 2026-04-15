@@ -130,127 +130,6 @@ def _signal_arrow(signal: str) -> str:
 
 
 # --------------------------------------------------------------------------
-# Numeric value fetchers (return formatted strings for display)
-# --------------------------------------------------------------------------
-
-def _fetch_rates_value(ticker: str) -> str:
-    """Return latest 10Y yield as formatted string e.g. '4.23%'. Returns '—' on failure."""
-    try:
-        hist = yf.Ticker(ticker).history(period="5d", interval="1d")
-        if hist is None or hist.empty:
-            return "—"
-        closes = hist["Close"].dropna()
-        if closes.empty:
-            return "—"
-        return f"{closes.iloc[-1]:.2f}%"
-    except Exception:
-        return "—"
-
-
-def _fetch_rates_value_fred(series_id: str, fred_api_key: Optional[str]) -> str:
-    """Return latest 10Y yield from FRED as formatted string e.g. '6.78%'. Returns '—' on failure."""
-    if not fred_api_key:
-        return "—"
-    try:
-        params = {
-            "series_id": series_id,
-            "api_key": fred_api_key,
-            "file_type": "json",
-            "sort_order": "desc",
-            "limit": 3,
-        }
-        resp = requests.get(FRED_URL, params=params, timeout=15)
-        resp.raise_for_status()
-        for o in resp.json().get("observations", []):
-            v = o.get("value")
-            if v not in (None, ".", ""):
-                try:
-                    return f"{float(v):.2f}%"
-                except ValueError:
-                    pass
-        return "—"
-    except Exception:
-        return "—"
-
-
-def _fetch_growth_value(region: str) -> str:
-    """Return 3-month equity index return as formatted string e.g. '+3.2%'. Returns '—' on failure."""
-    ticker = EQUITY_TICKERS.get(region)
-    if not ticker:
-        return "—"
-    try:
-        hist = yf.Ticker(ticker).history(period="6mo", interval="1d")
-        if hist is None or hist.empty:
-            return "—"
-        closes = hist["Close"].dropna()
-        if len(closes) < MIN_RATES_LOOKBACK:
-            return "—"
-        latest = float(closes.iloc[-1])
-        prior = float(closes.iloc[-MIN_RATES_LOOKBACK])
-        pct = (latest - prior) / prior * 100
-        return f"{pct:+.1f}%"
-    except Exception:
-        return "—"
-
-
-def _fetch_inflation_value(series_id: str, fred_api_key: Optional[str]) -> str:
-    """Return latest YoY CPI % from index series e.g. '5.1% YoY'. Returns '—' on failure."""
-    if not fred_api_key:
-        return "—"
-    try:
-        params = {
-            "series_id": series_id,
-            "api_key": fred_api_key,
-            "file_type": "json",
-            "sort_order": "desc",
-            "limit": 15,
-        }
-        resp = requests.get(FRED_URL, params=params, timeout=15)
-        resp.raise_for_status()
-        values: list[float] = []
-        for o in resp.json().get("observations", []):
-            v = o.get("value")
-            if v not in (None, ".", ""):
-                try:
-                    values.append(float(v))
-                except ValueError:
-                    pass
-        if len(values) < 13:
-            return "—"
-        yoy = (values[0] / values[12] - 1) * 100
-        return f"{yoy:.1f}% YoY"
-    except Exception:
-        return "—"
-
-
-def _fetch_inflation_value_yoy(series_id: str, fred_api_key: Optional[str],
-                                fetch_limit: int = 12) -> str:
-    """Return latest YoY CPI % from pre-computed YoY series e.g. '4.8% YoY'. Returns '—' on failure."""
-    if not fred_api_key:
-        return "—"
-    try:
-        params = {
-            "series_id": series_id,
-            "api_key": fred_api_key,
-            "file_type": "json",
-            "sort_order": "desc",
-            "limit": fetch_limit,
-        }
-        resp = requests.get(FRED_URL, params=params, timeout=15)
-        resp.raise_for_status()
-        for o in resp.json().get("observations", []):
-            v = o.get("value")
-            if v not in (None, ".", ""):
-                try:
-                    return f"{float(v):.1f}% YoY"
-                except ValueError:
-                    pass
-        return "—"
-    except Exception:
-        return "—"
-
-
-# --------------------------------------------------------------------------
 # Live signal fetchers
 # --------------------------------------------------------------------------
 
@@ -494,25 +373,9 @@ def fetch_macro_signals(
             inflation = _fetch_inflation_signal_yoy(region, CPI_SERIES_YOY[region], fred_api_key,
                                                      fetch_limit=limit)
 
-        # Numeric values for display
-        if region in YIELD_TICKERS:
-            rates_val = _fetch_rates_value(YIELD_TICKERS[region])
-        else:
-            rates_val = _fetch_rates_value_fred(YIELD_FRED_SERIES[region], fred_api_key)
-
-        growth_val = _fetch_growth_value(region)
-
-        if region in CPI_SERIES_INDEX:
-            inflation_val = _fetch_inflation_value(CPI_SERIES_INDEX[region], fred_api_key)
-        else:
-            limit = CPI_YOY_FETCH_LIMIT.get(region, 12)
-            inflation_val = _fetch_inflation_value_yoy(CPI_SERIES_YOY[region], fred_api_key,
-                                                        fetch_limit=limit)
-
         regime_label, color = _determine_regime(rates, growth, inflation)
         signals[region] = {
             "rates": rates, "growth": growth, "inflation": inflation,
-            "rates_value": rates_val, "growth_value": growth_val, "inflation_value": inflation_val,
             "regime": regime_label, "color": color,
         }
 
