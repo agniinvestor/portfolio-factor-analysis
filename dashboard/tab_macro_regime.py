@@ -73,7 +73,7 @@ def _render_section_b(signals: dict[str, dict[str, str]]) -> None:
         sig = signals.get(region, {})
         favored, avoided = mf._get_factor_recommendations(sig.get("regime", "Unknown"))
         rows["Rates"].append(f"{sig.get('rates_value', '—')} {mf._signal_arrow(sig.get('rates', 'unknown'))}")
-        rows["Growth"].append(f"{sig.get('growth_value', '—')} {mf._signal_arrow(sig.get('growth', 'unknown'))}")
+        rows["Growth"].append(mf._signal_arrow(sig.get('growth', 'unknown')))
         rows["Inflation"].append(f"{sig.get('inflation_value', '—')} {mf._signal_arrow(sig.get('inflation', 'unknown'))}")
         rows["Regime"].append(sig.get("regime", "Unknown"))
         rows["Top Favored Factors"].append(", ".join(favored) if favored else "—")
