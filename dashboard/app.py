@@ -1,3 +1,4 @@
+import re
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -17,6 +18,17 @@ from dashboard.explanations import TOOLTIPS, TAB2_GLOSSARY, TAB3_GLOSSARY, TAB5_
 from data.macro_fetcher import fetch_macro_signals
 
 PORTFOLIO_PATH = Path(__file__).parent.parent / "portfolio.xlsx"
+
+
+def _callout(text: str) -> None:
+    """Render a styled insight card with a navy left border."""
+    st.markdown(
+        f'<div style="border-left:4px solid #1A3A5C;background:#F7F9FC;'
+        f'padding:12px 16px;border-radius:0 6px 6px 0;font-size:15px;'
+        f'line-height:1.6;margin:8px 0;">{text}</div>',
+        unsafe_allow_html=True,
+    )
+
 
 st.set_page_config(page_title="Portfolio Factor Analysis", layout="wide")
 st.title("Portfolio Factor Analysis Dashboard")
@@ -274,7 +286,8 @@ with tab_profile:
             narrative += "Style analysis shows a " + " and ".join(style_desc_parts) + ". "
         narrative += size_note
 
-        st.info(f"*{narrative}*")
+        narrative_html = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', narrative)
+        _callout(narrative_html)
 
         # ── Section B: Investment Memo ─────────────────────────────────────────────
         st.markdown("### Investment Memo")
@@ -680,9 +693,9 @@ with tab_factor:
                     direction = "positive" if b > 0 else "negative"
                     tilts.append(f"{direction} {label} (β={b:.2f})")
             if tilts:
-                st.info("**Significant factor tilts:** " + ", ".join(tilts) + ".")
+                _callout("<b>Significant factor tilts:</b> " + ", ".join(tilts) + ".")
             else:
-                st.info("No statistically significant factor tilts detected at 5% level.")
+                _callout("No statistically significant factor tilts detected at 5% level.")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB: Style Scorecard
